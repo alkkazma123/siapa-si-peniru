@@ -21,6 +21,7 @@ local originals: { [number]: {
 } } = {}
 
 local cooldowns: { [number]: number } = {}
+local activeDisguiseToken: { [number]: number } = {}  -- userId -> token (auto-revert checks token)
 
 local function getHumanoid(player: Player): Humanoid?
     local char = player.Character
@@ -112,6 +113,18 @@ function DisguiseSystem.tryDisguise(peniru: Player, alivePlayers: { Player }, ex
     if Remotes then
         Remotes.event("DisguiseUpdated"):FireAllClients(peniru, target)
     end
+
+    -- Schedule auto-revert after DISGUISE_DURATION using a token to ignore stale tasks
+    local token = (activeDisguiseToken[peniru.UserId] or 0) + 1
+    activeDisguiseToken[peniru.UserId] = token
+    task.delay(Config.DISGUISE_DURATION, function()
+        if activeDisguiseToken[peniru.UserId] ~= token then return end
+        DisguiseSystem.restore(peniru)
+        if Remotes then
+            Remotes.event("Notify"):FireClient(peniru, "Penyamaran berakhir", "warn", 2)
+        end
+    end)
+
     return true, target
 end
 
@@ -146,6 +159,7 @@ function DisguiseSystem.restoreAll()
     end
     originals = {}
     cooldowns = {}
+    activeDisguiseToken = {}
 end
 
 function DisguiseSystem.init(deps)

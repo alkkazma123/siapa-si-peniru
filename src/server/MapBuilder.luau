@@ -91,10 +91,11 @@ local function buildLobby(workspace: Workspace)
     })
     podium.Parent = f
 
+    -- Welcome sign (front)
     local signPart = makePart({
         Name = "WelcomeSign",
-        Size = Vector3.new(18, 6, 0.5),
-        CFrame = CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, 6, 0)),
+        Size = Vector3.new(22, 7, 0.5),
+        CFrame = CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, 7, 0)),
         Color = Color3.fromRGB(20, 22, 30),
         Material = Enum.Material.SmoothPlastic,
     })
@@ -103,7 +104,7 @@ local function buildLobby(workspace: Workspace)
     local sg = Instance.new("SurfaceGui")
     sg.Face = Enum.NormalId.Front
     sg.AlwaysOnTop = false
-    sg.CanvasSize = Vector2.new(900, 300)
+    sg.CanvasSize = Vector2.new(1100, 350)
     sg.Parent = signPart
 
     local title = Instance.new("TextLabel")
@@ -120,15 +121,82 @@ local function buildLobby(workspace: Workspace)
     sub.BackgroundTransparency = 1
     sub.Size = UDim2.fromScale(1, 0.35)
     sub.Position = UDim2.fromScale(0, 0.6)
-    sub.Text = "Social Deduction • Min 3 Player • Tekan E untuk Capture saat Round"
+    sub.Text = "Social Deduction • Min 3 Player • Buka Shop 🛍 & Rules 📖 di kanan-atas"
     sub.Font = Enum.Font.Gotham
     sub.TextColor3 = Config.THEME.TEXT_DIM
     sub.TextScaled = true
     sub.Parent = sg
 
-    -- Lobby spawn (neutral)
+    -- Rules board (back of welcome sign)
+    local rulesPart = makePart({
+        Name = "RulesBoard",
+        Size = Vector3.new(22, 12, 0.5),
+        CFrame = CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, 9, 0)) * CFrame.Angles(0, math.pi, 0),
+        Color = Color3.fromRGB(20, 22, 30),
+        Material = Enum.Material.SmoothPlastic,
+    })
+    rulesPart.Parent = f
+
+    local rg = Instance.new("SurfaceGui")
+    rg.Face = Enum.NormalId.Back
+    rg.AlwaysOnTop = false
+    rg.CanvasSize = Vector2.new(1100, 600)
+    rg.Parent = rulesPart
+
+    local rTitle = Instance.new("TextLabel")
+    rTitle.BackgroundTransparency = 1
+    rTitle.Size = UDim2.new(1, 0, 0, 70)
+    rTitle.Position = UDim2.fromOffset(0, 12)
+    rTitle.Text = "📖  CARA BERMAIN"
+    rTitle.Font = Enum.Font.GothamBlack
+    rTitle.TextColor3 = Config.THEME.ACCENT
+    rTitle.TextSize = 56
+    rTitle.Parent = rg
+
+    local rBody = Instance.new("TextLabel")
+    rBody.BackgroundTransparency = 1
+    rBody.Size = UDim2.new(1, -80, 1, -100)
+    rBody.Position = UDim2.fromOffset(40, 90)
+    rBody.Text = table.concat({
+        "• 1 PENIRU + sisanya WARGA tiap ronde (30-60 detik).",
+        "• PENIRU [E] menangkap warga, [Q] menyamar (15s), [F] flash, [H] hacker.",
+        "• ANGEL (warga acak) punya 1 SHIELD untuk menahan capture sekali.",
+        "• PENIRU menang jika sisa 1 warga; WARGA menang jika vote benar di akhir.",
+        "• Coin & XP untuk shop dan level. Buka 🛍 di UI.",
+    }, "\n")
+    rBody.TextWrapped = true
+    rBody.Font = Enum.Font.GothamSemibold
+    rBody.TextColor3 = Config.THEME.TEXT
+    rBody.TextSize = 32
+    rBody.TextXAlignment = Enum.TextXAlignment.Left
+    rBody.TextYAlignment = Enum.TextYAlignment.Top
+    rBody.Parent = rg
+
+    -- Decorative shop pillars next to podium
+    for _, off in ipairs({ -16, 16 }) do
+        local pad = makePart({
+            Name = "DeskPad",
+            Size = Vector3.new(8, 1, 8),
+            Position = Config.LOBBY_CENTER + Vector3.new(off, -3, -16),
+            Color = Color3.fromRGB(60, 64, 80),
+            Material = Enum.Material.SmoothPlastic,
+        })
+        pad.Parent = f
+        local glow = makePart({
+            Name = "DeskGlow",
+            Size = Vector3.new(8, 0.4, 8),
+            Position = Config.LOBBY_CENTER + Vector3.new(off, -2.4, -16),
+            Color = off < 0 and Config.THEME.GOLD or Config.THEME.ACCENT_2,
+            Material = Enum.Material.Neon,
+            Transparency = 0.2,
+        })
+        glow.Parent = f
+    end
+
+    -- Lobby spawn (neutral). Slight offset so player faces the welcome sign.
     spawnLocation("LobbySpawn",
-        CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, Config.SPAWN_HEIGHT, 0)),
+        CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, Config.SPAWN_HEIGHT, 24),
+                   Config.LOBBY_CENTER + Vector3.new(0, Config.SPAWN_HEIGHT, 0)),
         f, true)
 
     return f
@@ -294,12 +362,24 @@ local function buildCity(workspace: Workspace, spawnsOut: { CFrame })
         end
     end
 
-    -- Spawn points (ring)
-    for k = 1, 16 do
-        local a = math.rad((k - 1) * (360 / 16))
-        local r = 60
-        local pos = Config.CITY_CENTER + Vector3.new(math.cos(a) * r, Config.SPAWN_HEIGHT, math.sin(a) * r)
-        table.insert(spawnsOut, CFrame.new(pos, pos + Vector3.new(-math.cos(a), 0, -math.sin(a))))
+    -- Spawn points along the cross-roads ONLY (guaranteed open ground, no buildings).
+    -- 4 distances along each of 4 road arms = 16 spawns.
+    local distances = { 25, 65, 105, 145 }
+    local arms = {
+        { dir = Vector3.new( 1, 0,  0), face = Vector3.new(-1, 0,  0) }, -- east arm, face center
+        { dir = Vector3.new(-1, 0,  0), face = Vector3.new( 1, 0,  0) }, -- west arm
+        { dir = Vector3.new( 0, 0,  1), face = Vector3.new( 0, 0, -1) }, -- north arm
+        { dir = Vector3.new( 0, 0, -1), face = Vector3.new( 0, 0,  1) }, -- south arm
+    }
+    for _, arm in ipairs(arms) do
+        for _, d in ipairs(distances) do
+            local pos = Config.CITY_CENTER + arm.dir * d + Vector3.new(0, Config.SPAWN_HEIGHT, 0)
+            -- Stagger slightly across the road width so players don't pile on one point
+            local jitter = (arm.dir.X ~= 0) and Vector3.new(0, 0, math.random(-3, 3))
+                                              or Vector3.new(math.random(-3, 3), 0, 0)
+            pos = pos + jitter
+            table.insert(spawnsOut, CFrame.new(pos, pos + arm.face))
+        end
     end
 
     return f
