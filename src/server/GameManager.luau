@@ -348,25 +348,10 @@ local function setState(newState: string, payload: any?)
     broadcastState(payload)
 end
 
-local function applySkin(player: Player, role: string)
-    local skin = DataManager.getEquippedSkin(player, role)
-    if not skin then return end
-    local char = player.Character
-    if not char then return end
-    -- Recolor body parts to the skin's color (works on R6 + R15).
-    local color = BrickColor.new(skin.color)
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-            pcall(function() part.BrickColor = color end)
-        end
-    end
-    -- Make Peniru a touch shadowy by also adjusting head
-    if role == Config.ROLE_PENIRU then
-        local head = char:FindFirstChild("Head")
-        if head and head:IsA("BasePart") then
-            pcall(function() head.Material = Enum.Material.SmoothPlastic end)
-        end
-    end
+local function applySkin(_player: Player, _role: string)
+    -- NOTE: Skin items are owned/equipped purely as collectibles; we intentionally
+    -- do NOT mutate the player's character colors anymore so the avatar stays
+    -- exactly as the player chose it on Roblox.
 end
 
 local function resetWalkSpeeds()

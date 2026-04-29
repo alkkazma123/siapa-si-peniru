@@ -28,7 +28,15 @@ local activeToken: { [number]: number } = {}
 
 local activeDummies: { [number]: Model } = {}
 local activeConns: { [number]: RBXScriptConnection } = {}
+local activeAnimConns: { [number]: RBXScriptConnection } = {}
 local originals: { [number]: Original } = {}
+
+-- Default R15 animation asset ids
+local ANIM_IDLE = "rbxassetid://507766388"
+local ANIM_WALK = "rbxassetid://913402848"
+local ANIM_RUN  = "rbxassetid://913376220"
+local ANIM_JUMP = "rbxassetid://507765000"
+local ANIM_FALL = "rbxassetid://507767968"
 
 local function getHumanoid(player: Player): Humanoid?
     local char = player.Character
@@ -172,6 +180,75 @@ local function buildDummy(target: Player, displayName: string, level: number): M
     return model
 end
 
+local function startAnimLoop(peniru: Player, dummy: Model)
+    local dHum = dummy:FindFirstChildOfClass("Humanoid")
+    if not dHum then return end
+    local animator = dHum:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = dHum
+    end
+
+    local function makeAnim(id: string)
+        local a = Instance.new("Animation")
+        a.AnimationId = id
+        return a
+    end
+
+    local tracks = {}
+    local ok = pcall(function()
+        tracks.idle = animator:LoadAnimation(makeAnim(ANIM_IDLE))
+        tracks.walk = animator:LoadAnimation(makeAnim(ANIM_WALK))
+        tracks.run  = animator:LoadAnimation(makeAnim(ANIM_RUN))
+        tracks.jump = animator:LoadAnimation(makeAnim(ANIM_JUMP))
+        tracks.fall = animator:LoadAnimation(makeAnim(ANIM_FALL))
+    end)
+    if not ok then return end
+
+    -- Loop everything
+    for _, t in pairs(tracks) do
+        t.Looped = true
+    end
+
+    tracks.idle:Play(0)
+
+    local lastState: string = "idle"
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        local char = peniru.Character
+        local pHum = char and char:FindFirstChildOfClass("Humanoid")
+        if not pHum then return end
+
+        local hState = pHum:GetState()
+        local newState: string
+        if hState == Enum.HumanoidStateType.Jumping then
+            newState = "jump"
+        elseif hState == Enum.HumanoidStateType.Freefall then
+            newState = "fall"
+        elseif pHum.MoveDirection.Magnitude > 0.05 then
+            newState = (pHum.WalkSpeed > 22) and "run" or "walk"
+        else
+            newState = "idle"
+        end
+
+        if newState ~= lastState then
+            for _, t in pairs(tracks) do t:Stop(0.15) end
+            local active = tracks[newState]
+            if active then active:Play(0.15) end
+            lastState = newState
+        end
+
+        -- Match track speed to player walk speed for natural feel
+        if newState == "walk" or newState == "run" then
+            local active = tracks[newState]
+            if active then
+                active:AdjustSpeed(math.clamp(pHum.WalkSpeed / 16, 0.6, 2.5))
+            end
+        end
+    end)
+    activeAnimConns[peniru.UserId] = conn
+end
+
 local function startFollowLoop(peniru: Player, dummy: Model)
     local dHRP = dummy:FindFirstChild("HumanoidRootPart")
     if not dHRP then return end
@@ -223,6 +300,7 @@ function DisguiseSystem.tryDisguise(peniru: Player, alivePlayers: { Player }, ex
 
     activeDummies[peniru.UserId] = dummy
     startFollowLoop(peniru, dummy)
+    startAnimLoop(peniru, dummy)
 
     cooldowns[peniru.UserId] = now + Config.DISGUISE_COOLDOWN
 
@@ -251,6 +329,12 @@ function DisguiseSystem.restore(player: Player)
         conn:Disconnect()
         activeConns[player.UserId] = nil
     end
+    -- Disconnect anim
+    local aconn = activeAnimConns[player.UserId]
+    if aconn then
+        aconn:Disconnect()
+        activeAnimConns[player.UserId] = nil
+    end
     -- Destroy dummy
     local dummy = activeDummies[player.UserId]
     if dummy then
@@ -273,10 +357,14 @@ function DisguiseSystem.restoreAll()
     for _, conn in pairs(activeConns) do
         if conn then conn:Disconnect() end
     end
+    for _, conn in pairs(activeAnimConns) do
+        if conn then conn:Disconnect() end
+    end
     for _, dummy in pairs(activeDummies) do
         if dummy then dummy:Destroy() end
     end
     activeConns = {}
+    activeAnimConns = {}
     activeDummies = {}
     originals = {}
     cooldowns = {}
