@@ -81,6 +81,32 @@ Remotes.func("GetGameState").OnServerInvoke = function(_player)
     return { state = GameManager.getState() }
 end
 
+-- Shop endpoints
+Remotes.func("GetShopState").OnServerInvoke = function(player)
+    return DataManager.getShopState(player)
+end
+Remotes.func("PurchaseItem").OnServerInvoke = function(player, itemId)
+    if typeof(itemId) ~= "string" then
+        return { success = false, message = "Invalid item" }
+    end
+    local ok, msg = DataManager.purchase(player, itemId)
+    Remotes.event("PurchaseResult"):FireClient(player, ok, msg, itemId)
+    if ok then
+        Remotes.event("ShopChanged"):FireClient(player, DataManager.getShopState(player))
+    end
+    return { success = ok, message = msg }
+end
+Remotes.func("EquipItem").OnServerInvoke = function(player, itemId)
+    if typeof(itemId) ~= "string" then
+        return { success = false, message = "Invalid item" }
+    end
+    local ok, msg = DataManager.equip(player, itemId)
+    if ok then
+        Remotes.event("ShopChanged"):FireClient(player, DataManager.getShopState(player))
+    end
+    return { success = ok, message = msg }
+end
+
 -- 7. Run the game loop
 GameManager.init({
     Remotes         = Remotes,

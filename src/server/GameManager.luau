@@ -17,11 +17,17 @@ local DisguiseSystem
 local mapInfo
 
 local state           = Config.STATES.LOBBY
-local roles: { [number]: string } = {}            -- userId -> role
-local alive: { [number]: boolean } = {}           -- userId -> alive (not captured/voted out)
+local roles: { [number]: string } = {}            -- userId -> base role (Peniru / Warga)
+local subroles: { [number]: string } = {}         -- userId -> Angel (only)
+local alive: { [number]: boolean } = {}           -- userId -> alive
 local captured: { [number]: boolean } = {}        -- userId -> in prison
+local shields: { [number]: number } = {}          -- userId -> remaining shield charges
 local captureCooldown: { [number]: number } = {}
-local votes: { [number]: number } = {}            -- voter userId -> target userId
+local flashCooldown: { [number]: number } = {}
+local hackerCooldown: { [number]: number } = {}
+local flashActiveUntil: { [number]: number } = {}
+local hackerActiveUntil: { [number]: number } = {}
+local votes: { [number]: number } = {}
 local voteOpen        = false
 local roundStart      = 0
 local roundDuration   = 0
@@ -85,8 +91,13 @@ end
 
 local function pushAbilityCooldowns(player: Player)
     Remotes.event("AbilityUpdate"):FireClient(player, {
-        captureCooldownEnd = captureCooldown[player.UserId] or 0,
+        captureCooldownEnd  = captureCooldown[player.UserId] or 0,
         disguiseCooldownEnd = DisguiseSystem.getCooldownEnd(player),
+        flashCooldownEnd    = flashCooldown[player.UserId] or 0,
+        hackerCooldownEnd   = hackerCooldown[player.UserId] or 0,
+        flashActiveUntil    = flashActiveUntil[player.UserId] or 0,
+        hackerActiveUntil   = hackerActiveUntil[player.UserId] or 0,
+        shieldCharges       = shields[player.UserId] or 0,
     })
 end
 
@@ -131,7 +142,21 @@ local function tryCapture(peniru: Player)
         return
     end
 
+    -- Apply cooldown immediately (whether shielded or not — capture attempt is a real action)
     captureCooldown[peniru.UserId] = now + Config.CAPTURE_COOLDOWN
+
+    -- Shield check (Angel)
+    if (shields[target.UserId] or 0) > 0 then
+        shields[target.UserId] = shields[target.UserId] - 1
+        Remotes.event("ShieldUsed"):FireAllClients(target, peniru)
+        notifyOne(target, "🛡️ Shield kamu terpakai! Capture ditahan.", "success", 4)
+        notifyOne(peniru, "🛡️ Shield Angel terpakai! Capture gagal.", "warn", 4)
+        playCueAll("Suspense", 0.4)
+        pushAbilityCooldowns(peniru)
+        pushAbilityCooldowns(target)
+        return
+    end
+
     alive[target.UserId] = false
     captured[target.UserId] = true
     teleportToPrison(target)
@@ -140,6 +165,72 @@ local function tryCapture(peniru: Player)
     notifyAll(("%s tertangkap dan dibawa ke penjara!"):format(target.DisplayName), "danger", 4)
     playCueAll("Alarm", 0.6)
 
+    pushAbilityCooldowns(peniru)
+end
+
+----------------------------------------------------------------
+-- flash (Peniru speed boost)
+----------------------------------------------------------------
+
+local function tryFlash(peniru: Player)
+    if state ~= Config.STATES.ROUND then return end
+    if roles[peniru.UserId] ~= Config.ROLE_PENIRU then return end
+    if not alive[peniru.UserId] then return end
+    local now = os.clock()
+    if (flashCooldown[peniru.UserId] or 0) > now then return end
+
+    local hum = peniru.Character and peniru.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    flashCooldown[peniru.UserId]   = now + Config.FLASH_COOLDOWN
+    flashActiveUntil[peniru.UserId] = now + Config.FLASH_DURATION
+    hum.WalkSpeed = Config.WALK_SPEED_FLASH
+    Remotes.event("FlashApplied"):FireClient(peniru, Config.FLASH_DURATION)
+    notifyOne(peniru, "⚡ Flash aktif!", "info", 2)
+    Remotes.event("PlayCue"):FireClient(peniru, "Tick", 0.7)
+
+    task.delay(Config.FLASH_DURATION, function()
+        local h = peniru.Character and peniru.Character:FindFirstChildOfClass("Humanoid")
+        if h then h.WalkSpeed = Config.WALK_SPEED_BASE end
+        flashActiveUntil[peniru.UserId] = 0
+        if alive[peniru.UserId] then pushAbilityCooldowns(peniru) end
+    end)
+    pushAbilityCooldowns(peniru)
+end
+
+----------------------------------------------------------------
+-- hacker (Peniru sees Warga locations briefly)
+----------------------------------------------------------------
+
+local function tryHacker(peniru: Player)
+    if state ~= Config.STATES.ROUND then return end
+    if roles[peniru.UserId] ~= Config.ROLE_PENIRU then return end
+    if not alive[peniru.UserId] then return end
+    local now = os.clock()
+    if (hackerCooldown[peniru.UserId] or 0) > now then return end
+
+    hackerCooldown[peniru.UserId]    = now + Config.HACKER_COOLDOWN
+    hackerActiveUntil[peniru.UserId] = now + Config.HACKER_DURATION
+
+    -- Build snapshot of alive Warga positions
+    local positions = {}
+    for _, p in ipairs(getAlivePlayers()) do
+        if roles[p.UserId] == Config.ROLE_WARGA and p ~= peniru then
+            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if r then
+                table.insert(positions, { name = p.DisplayName, x = r.Position.X, y = r.Position.Y, z = r.Position.Z })
+            end
+        end
+    end
+
+    Remotes.event("HackerVision"):FireClient(peniru, positions, Config.HACKER_DURATION)
+    notifyOne(peniru, "💻 Hacker aktif! Lokasi warga terdeteksi.", "info", 2)
+    Remotes.event("PlayCue"):FireClient(peniru, "Suspense", 0.5)
+
+    task.delay(Config.HACKER_DURATION, function()
+        hackerActiveUntil[peniru.UserId] = 0
+        if alive[peniru.UserId] then pushAbilityCooldowns(peniru) end
+    end)
     pushAbilityCooldowns(peniru)
 end
 
@@ -252,14 +343,52 @@ local function setState(newState: string, payload: any?)
     broadcastState(payload)
 end
 
+local function applySkin(player: Player, role: string)
+    local skin = DataManager.getEquippedSkin(player, role)
+    if not skin then return end
+    local char = player.Character
+    if not char then return end
+    -- Recolor body parts to the skin's color (works on R6 + R15).
+    local color = BrickColor.new(skin.color)
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            pcall(function() part.BrickColor = color end)
+        end
+    end
+    -- Make Peniru a touch shadowy by also adjusting head
+    if role == Config.ROLE_PENIRU then
+        local head = char:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            pcall(function() head.Material = Enum.Material.SmoothPlastic end)
+        end
+    end
+end
+
+local function resetWalkSpeeds()
+    for _, p in ipairs(Players:GetPlayers()) do
+        local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+        if h then
+            h.WalkSpeed = Config.WALK_SPEED_BASE
+            h.JumpPower = Config.JUMP_POWER
+        end
+    end
+end
+
 local function resetRound()
     roles = {}
+    subroles = {}
     alive = {}
     captured = {}
+    shields = {}
     votes = {}
     captureCooldown = {}
+    flashCooldown = {}
+    hackerCooldown = {}
+    flashActiveUntil = {}
+    hackerActiveUntil = {}
     voteOpen = false
     DisguiseSystem.restoreAll()
+    resetWalkSpeeds()
     teleportAllToLobby()
     broadcastAbilityCooldowns()
 end
@@ -294,16 +423,45 @@ local function assignRoles()
 
     -- Pick 1 Peniru
     local peniruIdx = math.random(1, #players)
+    local wargaList: { Player } = {}
     for i, p in ipairs(players) do
         local role = (i == peniruIdx) and Config.ROLE_PENIRU or Config.ROLE_WARGA
         roles[p.UserId] = role
         alive[p.UserId] = true
+        if role == Config.ROLE_WARGA then
+            table.insert(wargaList, p)
+        end
+    end
+
+    -- Pick Angel sub-role from Warga
+    local angelSet: { [number]: boolean } = {}
+    if #wargaList > 0 then
+        for k = 1, math.min(Config.ANGEL_PER_ROUND, #wargaList) do
+            local idx = math.random(1, #wargaList)
+            local angel = table.remove(wargaList, idx)
+            subroles[angel.UserId] = Config.ROLE_ANGEL
+            shields[angel.UserId] = Config.ANGEL_SHIELD_CHARGES
+            angelSet[angel.UserId] = true
+        end
+    end
+
+    -- Notify each player of their role
+    for _, p in ipairs(players) do
+        local role = roles[p.UserId]
+        local sub = subroles[p.UserId]
         Remotes.event("RoleAssigned"):FireClient(p, role, {
             durationMin = Config.ROUND_DURATION_MIN,
             durationMax = Config.ROUND_DURATION_MAX,
             captureKey = Config.CAPTURE_KEY.Name,
             disguiseKey = Config.DISGUISE_KEY.Name,
+            flashKey = Config.FLASH_KEY.Name,
+            hackerKey = Config.HACKER_KEY.Name,
+            voteKey = Config.VOTE_KEY.Name,
+            subRole = sub,
+            shieldCharges = shields[p.UserId] or 0,
         })
+        applySkin(p, role)
+        pushAbilityCooldowns(p)
     end
 end
 
@@ -469,11 +627,25 @@ function GameManager.init(deps)
         pushAbilityCooldowns(player)
     end)
 
+    -- Flash + Hacker (client -> server)
+    Remotes.event("TryFlash").OnServerEvent:Connect(function(player)
+        tryFlash(player)
+    end)
+    Remotes.event("TryHacker").OnServerEvent:Connect(function(player)
+        tryHacker(player)
+    end)
+
     Players.PlayerRemoving:Connect(function(player)
         roles[player.UserId] = nil
+        subroles[player.UserId] = nil
         alive[player.UserId] = nil
         captured[player.UserId] = nil
+        shields[player.UserId] = nil
         captureCooldown[player.UserId] = nil
+        flashCooldown[player.UserId] = nil
+        hackerCooldown[player.UserId] = nil
+        flashActiveUntil[player.UserId] = nil
+        hackerActiveUntil[player.UserId] = nil
         votes[player.UserId] = nil
     end)
 

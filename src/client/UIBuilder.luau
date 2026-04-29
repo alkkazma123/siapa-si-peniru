@@ -111,6 +111,8 @@ local xpBarFill   : Frame
 local mobileButtons : Frame
 local captureBtn  : TextButton
 local disguiseBtn : TextButton
+local flashBtn    : TextButton
+local hackerBtn   : TextButton
 local voteBtn     : TextButton
 local voteOverlay : Frame
 local voteList    : Frame
@@ -123,6 +125,14 @@ local leaderboardPanel : Frame
 local lobbyInfoPanel : Frame
 
 local captureCooldownEnd, disguiseCooldownEnd = 0, 0
+local flashCooldownEnd, hackerCooldownEnd = 0, 0
+local flashActiveUntil, hackerActiveUntil = 0, 0
+local shieldCharges = 0
+local shopBtn       : TextButton
+local rulesBtn      : TextButton
+local shopFrame     : Frame
+local rulesFrame    : Frame
+local loadingFrame  : Frame
 
 ----------------------------------------------------------------
 -- build
@@ -253,62 +263,47 @@ function UIBuilder.build()
     })
     xpText.Name = "XPText"
 
-    -- Mobile / accessible action buttons (bottom-right)
+    -- Action buttons — vertical stack on RIGHT side, mid-vertical, sized to NOT
+    -- overlap Roblox's mobile jump button (bottom-right) or movement thumbstick.
+    -- Each button is 70x70 with 8px padding; container is anchored at right-middle.
     mobileButtons = makeFrame(screenGui, {
         Name = "Actions",
-        AnchorPoint = Vector2.new(1, 1),
-        Position = UDim2.new(1, -16, 1, -16),
-        Size = UDim2.new(0, 280, 0, 84),
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -12, 0.5, 0),
+        Size = UDim2.new(0, 76, 0, 5 * 70 + 4 * 8),  -- up to 5 buttons stacked
         BackgroundTransparency = 1,
     })
     local list = Instance.new("UIListLayout")
-    list.FillDirection = Enum.FillDirection.Horizontal
+    list.FillDirection = Enum.FillDirection.Vertical
     list.HorizontalAlignment = Enum.HorizontalAlignment.Right
-    list.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    list.VerticalAlignment = Enum.VerticalAlignment.Center
+    list.SortOrder = Enum.SortOrder.LayoutOrder
     list.Padding = UDim.new(0, 8)
     list.Parent = mobileButtons
 
-    captureBtn = makeButton(mobileButtons, {
-        Name = "CaptureBtn",
-        Size = UDim2.new(0, 84, 0, 84),
-        BackgroundColor3 = THEME.DANGER,
-        Text = "TANGKAP\n[E]",
-        TextColor3 = THEME.TEXT,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        AutoButtonColor = true,
-        Visible = false,
-    })
-    corner(captureBtn, 16)
-    stroke(captureBtn, THEME.BORDER, 1, 0.4)
+    local function makeActionBtn(name, color, text, textColor, layoutOrder)
+        local b = makeButton(mobileButtons, {
+            Name = name,
+            Size = UDim2.new(0, 70, 0, 70),
+            BackgroundColor3 = color,
+            Text = text,
+            TextColor3 = textColor or THEME.TEXT,
+            Font = Enum.Font.GothamBold,
+            TextSize = 11,
+            AutoButtonColor = true,
+            Visible = false,
+            LayoutOrder = layoutOrder,
+        })
+        corner(b, 14)
+        stroke(b, THEME.BORDER, 1, 0.4)
+        return b
+    end
 
-    disguiseBtn = makeButton(mobileButtons, {
-        Name = "DisguiseBtn",
-        Size = UDim2.new(0, 84, 0, 84),
-        BackgroundColor3 = THEME.ACCENT,
-        Text = "MENYAMAR\n[Q]",
-        TextColor3 = THEME.TEXT,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        AutoButtonColor = true,
-        Visible = false,
-    })
-    corner(disguiseBtn, 16)
-    stroke(disguiseBtn, THEME.BORDER, 1, 0.4)
-
-    voteBtn = makeButton(mobileButtons, {
-        Name = "VoteBtn",
-        Size = UDim2.new(0, 84, 0, 84),
-        BackgroundColor3 = THEME.ACCENT_2,
-        Text = "VOTE\n[V]",
-        TextColor3 = Color3.fromRGB(20, 22, 28),
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        AutoButtonColor = true,
-        Visible = false,
-    })
-    corner(voteBtn, 16)
-    stroke(voteBtn, THEME.BORDER, 1, 0.4)
+    captureBtn  = makeActionBtn("CaptureBtn",  THEME.DANGER,   "TANGKAP\n[E]",   THEME.TEXT, 1)
+    disguiseBtn = makeActionBtn("DisguiseBtn", THEME.ACCENT,   "SAMAR\n[Q]",     THEME.TEXT, 2)
+    flashBtn    = makeActionBtn("FlashBtn",    THEME.WARN,     "FLASH\n[F]",     Color3.fromRGB(20, 22, 28), 3)
+    hackerBtn   = makeActionBtn("HackerBtn",   THEME.ACCENT_2, "HACKER\n[H]",    Color3.fromRGB(20, 22, 28), 4)
+    voteBtn     = makeActionBtn("VoteBtn",     THEME.ACCENT_2, "VOTE\n[V]",      Color3.fromRGB(20, 22, 28), 5)
 
     -- Notification stack (top-center, below top bar)
     notifyStack = makeFrame(screenGui, {
@@ -409,18 +404,53 @@ function UIBuilder.build()
         ZIndex = 80,
     })
 
-    -- Leaderboard toggle button (top-left)
-    leaderboardBtn = makeButton(screenGui, {
-        Name = "LBBtn",
+    -- Top-left utility buttons (Leaderboard, Shop, Rules)
+    local leftCol = makeFrame(screenGui, {
+        Name = "LeftCol",
         Position = UDim2.new(0, 16, 0, 16),
+        Size = UDim2.new(0, 56, 0, 56 * 3 + 16),
+        BackgroundTransparency = 1,
+    })
+    local leftLayout = Instance.new("UIListLayout")
+    leftLayout.FillDirection = Enum.FillDirection.Vertical
+    leftLayout.Padding = UDim.new(0, 8)
+    leftLayout.Parent = leftCol
+
+    leaderboardBtn = makeButton(leftCol, {
+        Name = "LBBtn",
         Size = UDim2.new(0, 56, 0, 56),
         BackgroundColor3 = THEME.SURFACE,
         Text = "🏆",
         TextSize = 24,
         AutoButtonColor = true,
+        LayoutOrder = 1,
     })
     corner(leaderboardBtn, 14)
     stroke(leaderboardBtn, THEME.BORDER, 1, 0.4)
+
+    shopBtn = makeButton(leftCol, {
+        Name = "ShopBtn",
+        Size = UDim2.new(0, 56, 0, 56),
+        BackgroundColor3 = THEME.SURFACE,
+        Text = "🛍",
+        TextSize = 24,
+        AutoButtonColor = true,
+        LayoutOrder = 2,
+    })
+    corner(shopBtn, 14)
+    stroke(shopBtn, THEME.BORDER, 1, 0.4)
+
+    rulesBtn = makeButton(leftCol, {
+        Name = "RulesBtn",
+        Size = UDim2.new(0, 56, 0, 56),
+        BackgroundColor3 = THEME.SURFACE,
+        Text = "📖",
+        TextSize = 24,
+        AutoButtonColor = true,
+        LayoutOrder = 3,
+    })
+    corner(rulesBtn, 14)
+    stroke(rulesBtn, THEME.BORDER, 1, 0.4)
 
     -- Leaderboard panel
     leaderboardPanel = makeFrame(screenGui, {
@@ -487,7 +517,7 @@ function UIBuilder.build()
     local lobbyInfoText = makeText(lobbyInfoPanel, {
         Name = "Body",
         Size = UDim2.fromScale(1, 1),
-        Text = "Tunggu di lobby. Game mulai otomatis saat ada minimal 3 pemain.\nKontrol: [E] tangkap • [Q] menyamar • [V] vote • PC + Mobile didukung.",
+        Text = "Lobby — game mulai otomatis saat ≥3 pemain.\n[E] Tangkap  [Q] Samar  [F] Flash  [H] Hacker  [V] Vote",
         Font = Enum.Font.Gotham,
         TextColor3 = THEME.TEXT_DIM,
         TextSize = 13,
@@ -495,14 +525,232 @@ function UIBuilder.build()
         TextWrapped = true,
     })
 
+    -- Shop modal (full-screen overlay)
+    shopFrame = makeFrame(screenGui, {
+        Name = "Shop",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.fromRGB(8, 9, 14),
+        BackgroundTransparency = 0.2,
+        Visible = false,
+        ZIndex = 60,
+    })
+    do
+        local card = makeFrame(shopFrame, {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(0, 720, 0, 520),
+            BackgroundColor3 = THEME.BG_ALT,
+            ZIndex = 61,
+        })
+        corner(card, 18)
+        stroke(card, THEME.BORDER, 1.5, 0.2)
+
+        makeText(card, {
+            Position = UDim2.new(0, 24, 0, 18),
+            Size = UDim2.new(1, -160, 0, 32),
+            Text = "🛍  SHOP KARAKTER",
+            Font = Enum.Font.GothamBlack,
+            TextColor3 = THEME.ACCENT,
+            TextSize = 22,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 62,
+        })
+
+        local coinTag = makeText(card, {
+            Name = "CoinTag",
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -64, 0, 22),
+            Size = UDim2.new(0, 100, 0, 26),
+            Text = "🟡 0",
+            Font = Enum.Font.GothamBold,
+            TextColor3 = THEME.GOLD,
+            TextSize = 18,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 62,
+        })
+
+        local closeBtn = makeButton(card, {
+            Name = "CloseBtn",
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -16, 0, 16),
+            Size = UDim2.new(0, 36, 0, 36),
+            BackgroundColor3 = THEME.SURFACE,
+            Text = "×",
+            TextSize = 22,
+            Font = Enum.Font.GothamBold,
+            AutoButtonColor = true,
+            ZIndex = 62,
+        })
+        corner(closeBtn, 12)
+        closeBtn.MouseButton1Click:Connect(function()
+            shopFrame.Visible = false
+        end)
+
+        local list = Instance.new("ScrollingFrame")
+        list.Name = "List"
+        list.Position = UDim2.new(0, 24, 0, 70)
+        list.Size = UDim2.new(1, -48, 1, -94)
+        list.BackgroundTransparency = 1
+        list.BorderSizePixel = 0
+        list.CanvasSize = UDim2.fromOffset(0, 0)
+        list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        list.ScrollBarThickness = 4
+        list.ScrollBarImageColor3 = THEME.BORDER
+        list.ZIndex = 62
+        list.Parent = card
+
+        local grid = Instance.new("UIGridLayout")
+        grid.CellSize = UDim2.new(0, 200, 0, 200)
+        grid.CellPadding = UDim2.fromOffset(12, 12)
+        grid.SortOrder = Enum.SortOrder.LayoutOrder
+        grid.Parent = list
+
+        shopFrame:SetAttribute("ListPath", list:GetFullName())
+        shopFrame:SetAttribute("CoinPath", coinTag:GetFullName())
+    end
+
+    -- Rules popup
+    rulesFrame = makeFrame(screenGui, {
+        Name = "Rules",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.fromRGB(8, 9, 14),
+        BackgroundTransparency = 0.25,
+        Visible = false,
+        ZIndex = 70,
+    })
+    do
+        local card = makeFrame(rulesFrame, {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(0, 580, 0, 480),
+            BackgroundColor3 = THEME.BG_ALT,
+            ZIndex = 71,
+        })
+        corner(card, 18)
+        stroke(card, THEME.ACCENT, 1.5, 0.2)
+
+        makeText(card, {
+            Position = UDim2.new(0, 24, 0, 20),
+            Size = UDim2.new(1, -48, 0, 32),
+            Text = "📖  CARA BERMAIN",
+            Font = Enum.Font.GothamBlack,
+            TextColor3 = THEME.ACCENT,
+            TextSize = 22,
+            ZIndex = 72,
+        })
+
+        makeText(card, {
+            Position = UDim2.new(0, 24, 0, 64),
+            Size = UDim2.new(1, -48, 1, -130),
+            Text = table.concat({
+                "1) Setiap ronde 1 PENIRU dipilih acak. Sisanya WARGA.",
+                "2) Salah satu warga jadi ANGEL — punya 1 SHIELD untuk menahan capture.",
+                "",
+                "PENIRU bisa:",
+                "  • [E] TANGKAP warga terdekat (cooldown ~10s).",
+                "  • [Q] SAMAR jadi warga (15s, lalu balik ke wujud asli).",
+                "  • [F] FLASH (kecepatan +90%, durasi 5s, cooldown 30s).",
+                "  • [H] HACKER (lihat lokasi warga 4s, cooldown 35s).",
+                "",
+                "WARGA bisa:",
+                "  • Bertahan, observasi, lalu [V] VOTE pas voting phase.",
+                "  • ANGEL otomatis menahan 1 capture pertama.",
+                "",
+                "Win:",
+                "  • PENIRU menang jika sisa 1 warga (sisanya tertangkap).",
+                "  • WARGA menang jika berhasil vote PENIRU di akhir ronde.",
+                "",
+                "Hadiah: Coin (untuk shop 🛍) + XP (level naik tiap 100 XP).",
+            }, "\n"),
+            Font = Enum.Font.GothamSemibold,
+            TextColor3 = THEME.TEXT,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true,
+            ZIndex = 72,
+        })
+
+        local okBtn = makeButton(card, {
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.new(0.5, 0, 1, -20),
+            Size = UDim2.new(0, 200, 0, 44),
+            BackgroundColor3 = THEME.ACCENT,
+            Text = "MENGERTI",
+            TextColor3 = THEME.TEXT,
+            Font = Enum.Font.GothamBold,
+            TextSize = 16,
+            AutoButtonColor = true,
+            ZIndex = 72,
+        })
+        corner(okBtn, 12)
+        okBtn.MouseButton1Click:Connect(function()
+            rulesFrame.Visible = false
+        end)
+    end
+
+    -- Loading screen (initial)
+    loadingFrame = makeFrame(screenGui, {
+        Name = "Loading",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = THEME.BG,
+        BackgroundTransparency = 0,
+        Visible = true,
+        ZIndex = 200,
+    })
+    do
+        makeText(loadingFrame, {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.45, 0),
+            Size = UDim2.new(0, 600, 0, 60),
+            Text = "SIAPA SI PENIRU",
+            Font = Enum.Font.GothamBlack,
+            TextColor3 = THEME.ACCENT,
+            TextSize = 42,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            ZIndex = 201,
+        })
+        makeText(loadingFrame, {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 16),
+            Size = UDim2.new(0, 600, 0, 26),
+            Text = "Social Deduction • Memuat dunia, suara, dan UI...",
+            Font = Enum.Font.Gotham,
+            TextColor3 = THEME.TEXT_DIM,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            ZIndex = 201,
+        })
+        local barBg = makeFrame(loadingFrame, {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.6, 0),
+            Size = UDim2.new(0, 360, 0, 8),
+            BackgroundColor3 = THEME.SURFACE,
+            ZIndex = 201,
+        })
+        corner(barBg, 4)
+        local fill = makeFrame(barBg, {
+            Name = "Fill",
+            Size = UDim2.new(0, 0, 1, 0),
+            BackgroundColor3 = THEME.ACCENT,
+            ZIndex = 202,
+        })
+        corner(fill, 4)
+        loadingFrame:SetAttribute("FillPath", fill:GetFullName())
+    end
+
     return {
         screenGui = screenGui,
         captureBtn = captureBtn,
         disguiseBtn = disguiseBtn,
+        flashBtn = flashBtn,
+        hackerBtn = hackerBtn,
         voteBtn = voteBtn,
         leaderboardBtn = leaderboardBtn,
         leaderboardPanel = leaderboardPanel,
         leaderboardList = lbList,
+        shopBtn = shopBtn,
+        rulesBtn = rulesBtn,
     }
 end
 
@@ -553,34 +801,66 @@ end
 
 function UIBuilder.setActionButtons(role: string?, isVoting: boolean)
     if not captureBtn then return end
-    captureBtn.Visible  = role == Config.ROLE_PENIRU and not isVoting
-    disguiseBtn.Visible = role == Config.ROLE_PENIRU and not isVoting
+    local penIngame = role == Config.ROLE_PENIRU and not isVoting
+    captureBtn.Visible  = penIngame
+    disguiseBtn.Visible = penIngame
+    flashBtn.Visible    = penIngame
+    hackerBtn.Visible   = penIngame
     voteBtn.Visible     = isVoting and role ~= nil
 end
 
-function UIBuilder.setAbilityCooldowns(captureEnd: number, disguiseEnd: number)
-    captureCooldownEnd = captureEnd or 0
-    disguiseCooldownEnd = disguiseEnd or 0
+function UIBuilder.setAbilityCooldowns(data)
+    if type(data) ~= "table" then return end
+    captureCooldownEnd  = data.captureCooldownEnd or 0
+    disguiseCooldownEnd = data.disguiseCooldownEnd or 0
+    flashCooldownEnd    = data.flashCooldownEnd or 0
+    hackerCooldownEnd   = data.hackerCooldownEnd or 0
+    flashActiveUntil    = data.flashActiveUntil or 0
+    hackerActiveUntil   = data.hackerActiveUntil or 0
+    shieldCharges       = data.shieldCharges or 0
+end
+
+local function setBtnText(btn, label, key, cdLeft, activeLeft)
+    if not btn then return end
+    if activeLeft and activeLeft > 0 then
+        btn.Text = string.format("%s\nAKTIF %.1fs", label, activeLeft)
+        btn.BackgroundTransparency = 0
+    elseif cdLeft and cdLeft > 0 then
+        btn.Text = string.format("%s\n%.1fs", label, cdLeft)
+        btn.BackgroundTransparency = 0.45
+    else
+        btn.Text = string.format("%s\n[%s]", label, key)
+        btn.BackgroundTransparency = 0
+    end
 end
 
 function UIBuilder.tickCooldowns()
     if not captureBtn then return end
     local now = os.clock()
-    local cLeft = math.max(0, captureCooldownEnd - now)
-    local dLeft = math.max(0, disguiseCooldownEnd - now)
-    if cLeft > 0 then
-        captureBtn.Text = string.format("TANGKAP\n%.1fs", cLeft)
-        captureBtn.BackgroundTransparency = 0.4
-    else
-        captureBtn.Text = "TANGKAP\n[E]"
-        captureBtn.BackgroundTransparency = 0
-    end
-    if dLeft > 0 then
-        disguiseBtn.Text = string.format("MENYAMAR\n%.1fs", dLeft)
-        disguiseBtn.BackgroundTransparency = 0.4
-    else
-        disguiseBtn.Text = "MENYAMAR\n[Q]"
-        disguiseBtn.BackgroundTransparency = 0
+    setBtnText(captureBtn,  "TANGKAP", "E", captureCooldownEnd - now,  nil)
+    setBtnText(disguiseBtn, "SAMAR",   "Q", disguiseCooldownEnd - now, nil)
+    setBtnText(flashBtn,    "FLASH",   "F", flashCooldownEnd - now,    flashActiveUntil - now)
+    setBtnText(hackerBtn,   "HACKER",  "H", hackerCooldownEnd - now,   hackerActiveUntil - now)
+
+    -- Update Angel shield indicator on roleBadge if applicable
+    if roleBadge and roleBadge.Visible and shieldCharges > 0 then
+        local shieldDot = roleBadge:FindFirstChild("ShieldDot")
+        if not shieldDot then
+            shieldDot = Instance.new("TextLabel")
+            shieldDot.Name = "ShieldDot"
+            shieldDot.BackgroundTransparency = 1
+            shieldDot.Text = "🛡️"
+            shieldDot.Font = Enum.Font.GothamBold
+            shieldDot.TextSize = 18
+            shieldDot.AnchorPoint = Vector2.new(1, 0.5)
+            shieldDot.Position = UDim2.new(1, -8, 0.5, 0)
+            shieldDot.Size = UDim2.new(0, 24, 0, 24)
+            shieldDot.Parent = roleBadge
+        end
+        shieldDot.Visible = true
+    elseif roleBadge then
+        local shieldDot = roleBadge:FindFirstChild("ShieldDot")
+        if shieldDot then shieldDot.Visible = false end
     end
 end
 
@@ -953,6 +1233,254 @@ end
 
 function UIBuilder.setLobbyVisible(b: boolean)
     if lobbyInfoPanel then lobbyInfoPanel.Visible = b end
+end
+
+----------------------------------------------------------------
+-- Loading screen
+----------------------------------------------------------------
+
+function UIBuilder.setLoadingProgress(pct: number)
+    if not loadingFrame then return end
+    local fill = loadingFrame:FindFirstChild("Fill", true)
+    if fill and fill:IsA("Frame") then
+        TweenService:Create(fill, TweenInfo.new(0.25, Enum.EasingStyle.Sine), {
+            Size = UDim2.new(math.clamp(pct, 0, 1), 0, 1, 0),
+        }):Play()
+    end
+end
+
+function UIBuilder.dismissLoading()
+    if not loadingFrame then return end
+    UIBuilder.setLoadingProgress(1)
+    task.delay(0.25, function()
+        local tw = TweenService:Create(loadingFrame, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
+            BackgroundTransparency = 1,
+        })
+        tw:Play()
+        for _, child in ipairs(loadingFrame:GetDescendants()) do
+            if child:IsA("TextLabel") then
+                TweenService:Create(child, TweenInfo.new(0.5), { TextTransparency = 1 }):Play()
+            elseif child:IsA("Frame") then
+                TweenService:Create(child, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+            end
+        end
+        tw.Completed:Connect(function()
+            loadingFrame.Visible = false
+        end)
+    end)
+end
+
+----------------------------------------------------------------
+-- Rules popup
+----------------------------------------------------------------
+
+function UIBuilder.showRules()
+    if rulesFrame then rulesFrame.Visible = true end
+end
+
+function UIBuilder.hideRules()
+    if rulesFrame then rulesFrame.Visible = false end
+end
+
+----------------------------------------------------------------
+-- Shop
+----------------------------------------------------------------
+
+----------------------------------------------------------------
+-- Hacker waypoints
+----------------------------------------------------------------
+
+local hackerPanel: Frame? = nil
+
+function UIBuilder.showHackerVision(positions, duration)
+    -- positions: { { name, x, y, z } }
+    if hackerPanel then hackerPanel:Destroy() end
+    if not screenGui then return end
+    hackerPanel = makeFrame(screenGui, {
+        Name = "HackerVision",
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 130),
+        Size = UDim2.new(0, 460, 0, 24 + (#positions * 22) + 12),
+        BackgroundColor3 = Color3.fromRGB(15, 18, 24),
+        BackgroundTransparency = 0.15,
+        ZIndex = 40,
+    })
+    corner(hackerPanel, 10)
+    stroke(hackerPanel, THEME.ACCENT_2, 1.5, 0.2)
+    pad(hackerPanel, 8)
+
+    local title = makeText(hackerPanel, {
+        Size = UDim2.new(1, 0, 0, 20),
+        Text = ("💻 HACKER VISION • %.1fs"):format(duration or 0),
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.ACCENT_2,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 41,
+    })
+
+    local listFrame = makeFrame(hackerPanel, {
+        Position = UDim2.new(0, 0, 0, 24),
+        Size = UDim2.new(1, 0, 1, -24),
+        BackgroundTransparency = 1,
+        ZIndex = 41,
+    })
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 2)
+    layout.Parent = listFrame
+
+    local Players = game:GetService("Players")
+    local me = Players.LocalPlayer
+
+    for i, pos in ipairs(positions) do
+        local distLabel = ""
+        local meHrp = me.Character and me.Character:FindFirstChild("HumanoidRootPart")
+        if meHrp then
+            local d = (Vector3.new(pos.x, pos.y, pos.z) - meHrp.Position).Magnitude
+            distLabel = ("%dm"):format(math.floor(d))
+        end
+        makeText(listFrame, {
+            LayoutOrder = i,
+            Size = UDim2.new(1, 0, 0, 20),
+            Text = ("• %s — %s"):format(pos.name, distLabel),
+            Font = Enum.Font.GothamSemibold,
+            TextColor3 = THEME.TEXT,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 42,
+        })
+    end
+
+    -- Auto-update countdown + dismiss
+    local startTime = os.clock()
+    task.spawn(function()
+        while hackerPanel and hackerPanel.Parent do
+            local left = (duration or 0) - (os.clock() - startTime)
+            if left <= 0 then
+                hackerPanel:Destroy()
+                hackerPanel = nil
+                break
+            end
+            if title and title.Parent then
+                title.Text = ("💻 HACKER VISION • %.1fs"):format(left)
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+----------------------------------------------------------------
+-- Shop
+----------------------------------------------------------------
+
+function UIBuilder.openShop()
+    if shopFrame then shopFrame.Visible = true end
+end
+
+function UIBuilder.closeShop()
+    if shopFrame then shopFrame.Visible = false end
+end
+
+function UIBuilder.populateShop(shopState, callbacks)
+    if not shopFrame then return end
+    shopState = shopState or { catalog = {}, owned = {}, equipped = {}, coins = 0 }
+    callbacks = callbacks or {}
+
+    local list = shopFrame:FindFirstChild("List", true)
+    if not list then return end
+
+    -- Clear old items
+    for _, c in ipairs(list:GetChildren()) do
+        if c:IsA("Frame") and c.Name:sub(1, 4) == "Item" then
+            c:Destroy()
+        end
+    end
+
+    -- Update coin tag
+    local coinTag = shopFrame:FindFirstChild("CoinTag", true)
+    if coinTag and coinTag:IsA("TextLabel") then
+        coinTag.Text = "🟡 " .. tostring(shopState.coins or 0)
+    end
+
+    -- Sort catalog by role then price
+    local catalog = {}
+    for _, item in ipairs(shopState.catalog or {}) do
+        table.insert(catalog, item)
+    end
+    table.sort(catalog, function(a, b)
+        if a.role == b.role then return (a.price or 0) < (b.price or 0) end
+        return tostring(a.role) < tostring(b.role)
+    end)
+
+    for i, item in ipairs(catalog) do
+        local frame = makeFrame(list, {
+            Name = "Item_" .. item.id,
+            Size = UDim2.new(0, 200, 0, 200),
+            BackgroundColor3 = THEME.SURFACE,
+            LayoutOrder = i,
+            ZIndex = 62,
+        })
+        corner(frame, 12)
+        stroke(frame, THEME.BORDER, 1, 0.4)
+
+        local swatch = makeFrame(frame, {
+            Position = UDim2.new(0, 12, 0, 12),
+            Size = UDim2.new(1, -24, 0, 80),
+            BackgroundColor3 = item.color or Color3.fromRGB(180, 180, 180),
+            ZIndex = 63,
+        })
+        corner(swatch, 10)
+
+        makeText(frame, {
+            Position = UDim2.new(0, 12, 0, 100),
+            Size = UDim2.new(1, -24, 0, 20),
+            Text = item.name or item.id,
+            Font = Enum.Font.GothamBold,
+            TextColor3 = THEME.TEXT,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+        })
+
+        local roleLabel = (item.role == Config.ROLE_PENIRU) and "Peniru" or "Warga"
+        makeText(frame, {
+            Position = UDim2.new(0, 12, 0, 122),
+            Size = UDim2.new(1, -24, 0, 16),
+            Text = ("Untuk %s • 🟡 %d"):format(roleLabel, item.price or 0),
+            Font = Enum.Font.Gotham,
+            TextColor3 = THEME.TEXT_DIM,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 63,
+        })
+
+        local owned = (shopState.owned or {})[item.id] == true
+        local equipped = (shopState.equipped or {})[item.role] == item.id
+
+        local btn = makeButton(frame, {
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 12, 1, -12),
+            Size = UDim2.new(1, -24, 0, 36),
+            BackgroundColor3 = equipped and THEME.SUCCESS or (owned and THEME.ACCENT or THEME.GOLD),
+            Text = equipped and "TERPAKAI" or (owned and "PAKAI" or ("BELI 🟡" .. tostring(item.price or 0))),
+            Font = Enum.Font.GothamBold,
+            TextColor3 = Color3.fromRGB(20, 22, 28),
+            TextSize = 14,
+            AutoButtonColor = true,
+            ZIndex = 63,
+        })
+        corner(btn, 10)
+
+        btn.MouseButton1Click:Connect(function()
+            if equipped then return end
+            if owned then
+                if callbacks.onEquip then callbacks.onEquip(item.id) end
+            else
+                if callbacks.onPurchase then callbacks.onPurchase(item.id) end
+            end
+        end)
+    end
 end
 
 return UIBuilder

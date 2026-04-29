@@ -26,6 +26,18 @@ SoundController.init()
 SoundController.bgmLobby()
 UIBuilder.setLobbyVisible(true)
 
+-- Loading screen sequence: animate progress, then dismiss + show rules popup once
+task.spawn(function()
+    local steps = { 0.15, 0.35, 0.6, 0.85, 1.0 }
+    for _, p in ipairs(steps) do
+        UIBuilder.setLoadingProgress(p)
+        task.wait(0.4)
+    end
+    UIBuilder.dismissLoading()
+    task.wait(0.6)
+    UIBuilder.showRules()
+end)
+
 local localRole: string? = nil
 
 ----------------------------------------------------------------
@@ -72,17 +84,35 @@ local function fireDisguise()
     SoundController.play("Click", 0.4)
 end
 
+local function fireFlash()
+    if localRole ~= Config.ROLE_PENIRU then return end
+    Remotes.event("TryFlash"):FireServer()
+    SoundController.play("Click", 0.4)
+end
+
+local function fireHacker()
+    if localRole ~= Config.ROLE_PENIRU then return end
+    Remotes.event("TryHacker"):FireServer()
+    SoundController.play("Click", 0.4)
+end
+
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Config.CAPTURE_KEY then
         fireCapture()
     elseif input.KeyCode == Config.DISGUISE_KEY then
         fireDisguise()
+    elseif input.KeyCode == Config.FLASH_KEY then
+        fireFlash()
+    elseif input.KeyCode == Config.HACKER_KEY then
+        fireHacker()
     end
 end)
 
 ui.captureBtn.MouseButton1Click:Connect(fireCapture)
 ui.disguiseBtn.MouseButton1Click:Connect(fireDisguise)
+if ui.flashBtn  then ui.flashBtn.MouseButton1Click:Connect(fireFlash) end
+if ui.hackerBtn then ui.hackerBtn.MouseButton1Click:Connect(fireHacker) end
 ui.voteBtn.MouseButton1Click:Connect(function()
     -- Just visually scroll into view; the vote overlay is full-screen
     SoundController.play("Click", 0.4)
@@ -93,6 +123,58 @@ ui.leaderboardBtn.MouseButton1Click:Connect(function()
     if UIBuilder.toggleLeaderboard() then
         refreshLeaderboard()
     end
+end)
+
+----------------------------------------------------------------
+-- shop + rules buttons
+----------------------------------------------------------------
+
+local function refreshShop()
+    task.spawn(function()
+        local ok, shopState = pcall(function()
+            return Remotes.func("GetShopState"):InvokeServer()
+        end)
+        if ok and shopState then
+            UIBuilder.populateShop(shopState, {
+                onPurchase = function(itemId)
+                    Remotes.func("PurchaseItem"):InvokeServer(itemId)
+                end,
+                onEquip = function(itemId)
+                    Remotes.func("EquipItem"):InvokeServer(itemId)
+                end,
+            })
+        end
+    end)
+end
+
+if ui.shopBtn then
+    ui.shopBtn.MouseButton1Click:Connect(function()
+        SoundController.play("Click", 0.4)
+        UIBuilder.openShop()
+        refreshShop()
+    end)
+end
+if ui.rulesBtn then
+    ui.rulesBtn.MouseButton1Click:Connect(function()
+        SoundController.play("Click", 0.4)
+        UIBuilder.showRules()
+    end)
+end
+
+Remotes.event("ShopChanged").OnClientEvent:Connect(function(shopState)
+    UIBuilder.populateShop(shopState, {
+        onPurchase = function(itemId)
+            Remotes.func("PurchaseItem"):InvokeServer(itemId)
+        end,
+        onEquip = function(itemId)
+            Remotes.func("EquipItem"):InvokeServer(itemId)
+        end,
+    })
+    refreshMyData()
+end)
+
+Remotes.event("PurchaseResult").OnClientEvent:Connect(function(ok, msg, _itemId)
+    UIBuilder.notify(msg or (ok and "Berhasil!" or "Gagal"), ok and "success" or "warn", 3)
 end)
 
 ----------------------------------------------------------------
@@ -186,7 +268,26 @@ Remotes.event("PlayCue").OnClientEvent:Connect(function(name, vol)
 end)
 
 Remotes.event("AbilityUpdate").OnClientEvent:Connect(function(payload)
-    UIBuilder.setAbilityCooldowns(payload.captureCooldownEnd, payload.disguiseCooldownEnd)
+    UIBuilder.setAbilityCooldowns(payload)
+end)
+
+Remotes.event("FlashApplied").OnClientEvent:Connect(function(duration)
+    UIBuilder.notify(("⚡ Flash aktif %ds!"):format(duration or 0), "info", 2)
+    CameraController.flashFOV()
+end)
+
+Remotes.event("HackerVision").OnClientEvent:Connect(function(positions, duration)
+    UIBuilder.showHackerVision(positions or {}, duration or 0)
+end)
+
+Remotes.event("ShieldUsed").OnClientEvent:Connect(function(angelPlayer, peniruPlayer)
+    if angelPlayer == player then
+        UIBuilder.notify("🛡️ Shield kamu menahan capture dari " .. (peniruPlayer and peniruPlayer.DisplayName or "Peniru") .. "!", "success", 4)
+        SoundController.play("WinChime", 0.5)
+    elseif peniruPlayer == player then
+        UIBuilder.notify("🛡️ Shield Angel terpakai! Capture gagal.", "warn", 4)
+        SoundController.play("Alarm", 0.4)
+    end
 end)
 
 Remotes.event("DisguiseUpdated").OnClientEvent:Connect(function(peniruPlayer, targetPlayer)

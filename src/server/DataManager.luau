@@ -23,10 +23,34 @@ local ok2, store2 = pcall(function()
 end)
 if ok2 then LB_STORE = store2 end
 
-local cache: { [number]: { coins: number, xp: number, level: number, dirty: boolean } } = {}
+local cache: {
+    [number]: {
+        coins: number,
+        xp: number,
+        level: number,
+        owned: { [string]: boolean },
+        equipped: { [string]: string },  -- role -> itemId
+        dirty: boolean,
+    }
+} = {}
 
 local function defaultProfile()
-    return { coins = 0, xp = 0, level = 1, dirty = false }
+    local owned = {}
+    -- All players start with default skins owned.
+    for _, item in ipairs(Config.SHOP) do
+        if item.price == 0 then owned[item.id] = true end
+    end
+    return {
+        coins = 0,
+        xp = 0,
+        level = 1,
+        owned = owned,
+        equipped = {
+            Peniru = Config.DEFAULT_SKINS.Peniru,
+            Warga  = Config.DEFAULT_SKINS.Warga,
+        },
+        dirty = false,
+    }
 end
 
 local function safeLoad(userId: number)
@@ -35,12 +59,20 @@ local function safeLoad(userId: number)
         return PROFILE_STORE:GetAsync("u_" .. userId)
     end)
     if success and type(data) == "table" then
-        return {
-            coins = tonumber(data.coins) or 0,
-            xp    = tonumber(data.xp) or 0,
-            level = tonumber(data.level) or 1,
-            dirty = false,
-        }
+        local profile = defaultProfile()
+        profile.coins = tonumber(data.coins) or 0
+        profile.xp    = tonumber(data.xp) or 0
+        profile.level = tonumber(data.level) or 1
+        if type(data.owned) == "table" then
+            for k, v in pairs(data.owned) do
+                if v then profile.owned[k] = true end
+            end
+        end
+        if type(data.equipped) == "table" then
+            if type(data.equipped.Peniru) == "string" then profile.equipped.Peniru = data.equipped.Peniru end
+            if type(data.equipped.Warga)  == "string" then profile.equipped.Warga  = data.equipped.Warga end
+        end
+        return profile
     end
     return defaultProfile()
 end
@@ -49,7 +81,13 @@ local function safeSave(userId: number, profile)
     if not PROFILE_STORE then return end
     pcall(function()
         PROFILE_STORE:UpdateAsync("u_" .. userId, function(_)
-            return { coins = profile.coins, xp = profile.xp, level = profile.level }
+            return {
+                coins = profile.coins,
+                xp = profile.xp,
+                level = profile.level,
+                owned = profile.owned,
+                equipped = profile.equipped,
+            }
         end)
     end)
     if LB_STORE then
@@ -154,6 +192,65 @@ function DataManager.getLeaderboard(): { { name: string, level: number, xp: numb
         end
     end
     return out
+end
+
+-- Shop helpers --
+
+local function findShopItem(itemId: string)
+    for _, it in ipairs(Config.SHOP) do
+        if it.id == itemId then return it end
+    end
+    return nil
+end
+
+function DataManager.getShopState(player: Player)
+    local p = cache[player.UserId]
+    if not p then
+        return { owned = {}, equipped = {}, coins = 0, catalog = Config.SHOP }
+    end
+    return {
+        owned = p.owned,
+        equipped = p.equipped,
+        coins = p.coins,
+        catalog = Config.SHOP,
+    }
+end
+
+function DataManager.purchase(player: Player, itemId: string): (boolean, string)
+    local p = cache[player.UserId]
+    if not p then return false, "Profile not loaded" end
+    local item = findShopItem(itemId)
+    if not item then return false, "Item tidak ditemukan" end
+    if p.owned[itemId] then return false, "Sudah dimiliki" end
+    if p.coins < item.price then
+        return false, "Coin tidak cukup"
+    end
+    p.coins = p.coins - item.price
+    p.owned[itemId] = true
+    p.dirty = true
+    syncLeaderstats(player)
+    return true, "Berhasil membeli " .. item.name
+end
+
+function DataManager.equip(player: Player, itemId: string): (boolean, string)
+    local p = cache[player.UserId]
+    if not p then return false, "Profile not loaded" end
+    local item = findShopItem(itemId)
+    if not item then return false, "Item tidak ditemukan" end
+    if not p.owned[itemId] then return false, "Belum dimiliki" end
+    if item.role ~= "Peniru" and item.role ~= "Warga" then
+        return false, "Slot tidak valid"
+    end
+    p.equipped[item.role] = itemId
+    p.dirty = true
+    return true, "Berhasil dipakai"
+end
+
+function DataManager.getEquippedSkin(player: Player, roleName: string)
+    local p = cache[player.UserId]
+    if not p then return nil end
+    local id = p.equipped[roleName] or Config.DEFAULT_SKINS[roleName]
+    return findShopItem(id)
 end
 
 function DataManager.startAutoSave()
