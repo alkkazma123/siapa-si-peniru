@@ -276,8 +276,8 @@ Remotes.event("FlashApplied").OnClientEvent:Connect(function(duration)
     CameraController.flashFOV()
 end)
 
-Remotes.event("HackerVision").OnClientEvent:Connect(function(positions, duration)
-    UIBuilder.showHackerVision(positions or {}, duration or 0)
+Remotes.event("HackerVision").OnClientEvent:Connect(function(playerList, duration)
+    UIBuilder.showHackerVision(playerList or {}, duration or 0)
 end)
 
 Remotes.event("ShieldUsed").OnClientEvent:Connect(function(angelPlayer, peniruPlayer)

@@ -13,10 +13,10 @@ local OverheadManager = {}
 local function buildOverhead(displayName: string, level: number, role: string?): BillboardGui
     local bg = Instance.new("BillboardGui")
     bg.Name = "OverheadGui"
-    bg.Size = UDim2.fromOffset(220, 70)
-    bg.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+    bg.Size = UDim2.fromOffset(180, 56)
+    bg.StudsOffsetWorldSpace = Vector3.new(0, 2.6, 0)
     bg.AlwaysOnTop = true
-    bg.MaxDistance = 200
+    bg.MaxDistance = Config.OVERHEAD_MAX_DISTANCE or 35
     bg.LightInfluence = 0
 
     local frame = Instance.new("Frame")
@@ -137,6 +137,26 @@ function OverheadManager.applyDisguise(player: Player, displayName: string, leve
     if prev then prev:Destroy() end
     local bg = buildOverhead(displayName, level, nil)
     bg.Parent = head
+end
+
+-- Attach overhead directly onto a character/dummy model (used by DisguiseSystem)
+function OverheadManager.applyToCharacter(char: Model, displayName: string, level: number)
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local prev = head:FindFirstChild("OverheadGui")
+    if prev then prev:Destroy() end
+    local bg = buildOverhead(displayName, level, nil)
+    bg.Parent = head
+end
+
+function OverheadManager.setVisible(player: Player, visible: boolean)
+    local char = player.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local bg = head:FindFirstChild("OverheadGui")
+    if bg then bg.Enabled = visible end
 end
 
 function OverheadManager.init(dataManagerModule)

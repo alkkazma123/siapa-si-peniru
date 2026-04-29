@@ -176,6 +176,10 @@ local function tryFlash(peniru: Player)
     if state ~= Config.STATES.ROUND then return end
     if roles[peniru.UserId] ~= Config.ROLE_PENIRU then return end
     if not alive[peniru.UserId] then return end
+    if not DataManager.owns(peniru, Config.ABILITY_FLASH_ID) then
+        notifyOne(peniru, "⚡ Beli skill Flash di shop dulu!", "warn", 3)
+        return
+    end
     local now = os.clock()
     if (flashCooldown[peniru.UserId] or 0) > now then return end
 
@@ -206,24 +210,25 @@ local function tryHacker(peniru: Player)
     if state ~= Config.STATES.ROUND then return end
     if roles[peniru.UserId] ~= Config.ROLE_PENIRU then return end
     if not alive[peniru.UserId] then return end
+    if not DataManager.owns(peniru, Config.ABILITY_HACKER_ID) then
+        notifyOne(peniru, "💻 Beli skill Hacker di shop dulu!", "warn", 3)
+        return
+    end
     local now = os.clock()
     if (hackerCooldown[peniru.UserId] or 0) > now then return end
 
     hackerCooldown[peniru.UserId]    = now + Config.HACKER_COOLDOWN
     hackerActiveUntil[peniru.UserId] = now + Config.HACKER_DURATION
 
-    -- Build snapshot of alive Warga positions
-    local positions = {}
+    -- Build list of alive Warga (we send player refs; client applies Highlight ESP)
+    local wargaList: { Player } = {}
     for _, p in ipairs(getAlivePlayers()) do
         if roles[p.UserId] == Config.ROLE_WARGA and p ~= peniru then
-            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            if r then
-                table.insert(positions, { name = p.DisplayName, x = r.Position.X, y = r.Position.Y, z = r.Position.Z })
-            end
+            table.insert(wargaList, p)
         end
     end
 
-    Remotes.event("HackerVision"):FireClient(peniru, positions, Config.HACKER_DURATION)
+    Remotes.event("HackerVision"):FireClient(peniru, wargaList, Config.HACKER_DURATION)
     notifyOne(peniru, "💻 Hacker aktif! Lokasi warga terdeteksi.", "info", 2)
     Remotes.event("PlayCue"):FireClient(peniru, "Suspense", 0.5)
 
