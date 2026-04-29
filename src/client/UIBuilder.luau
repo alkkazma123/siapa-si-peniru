@@ -1292,80 +1292,75 @@ end
 
 local hackerPanel: Frame? = nil
 
-function UIBuilder.showHackerVision(positions, duration)
-    -- positions: { { name, x, y, z } }
+function UIBuilder.showHackerVision(playerList, duration)
+    -- playerList: { Player } — apply Highlight ESP on each character
     if hackerPanel then hackerPanel:Destroy() end
     if not screenGui then return end
+
+    -- Title banner
     hackerPanel = makeFrame(screenGui, {
         Name = "HackerVision",
         AnchorPoint = Vector2.new(0.5, 0),
         Position = UDim2.new(0.5, 0, 0, 130),
-        Size = UDim2.new(0, 460, 0, 24 + (#positions * 22) + 12),
+        Size = UDim2.new(0, 360, 0, 36),
         BackgroundColor3 = Color3.fromRGB(15, 18, 24),
         BackgroundTransparency = 0.15,
         ZIndex = 40,
     })
     corner(hackerPanel, 10)
     stroke(hackerPanel, THEME.ACCENT_2, 1.5, 0.2)
-    pad(hackerPanel, 8)
 
     local title = makeText(hackerPanel, {
-        Size = UDim2.new(1, 0, 0, 20),
+        Size = UDim2.fromScale(1, 1),
         Text = ("💻 HACKER VISION • %.1fs"):format(duration or 0),
         Font = Enum.Font.GothamBold,
         TextColor3 = THEME.ACCENT_2,
         TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
+        TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 41,
     })
 
-    local listFrame = makeFrame(hackerPanel, {
-        Position = UDim2.new(0, 0, 0, 24),
-        Size = UDim2.new(1, 0, 1, -24),
-        BackgroundTransparency = 1,
-        ZIndex = 41,
-    })
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 2)
-    layout.Parent = listFrame
-
-    local Players = game:GetService("Players")
-    local me = Players.LocalPlayer
-
-    for i, pos in ipairs(positions) do
-        local distLabel = ""
-        local meHrp = me.Character and me.Character:FindFirstChild("HumanoidRootPart")
-        if meHrp then
-            local d = (Vector3.new(pos.x, pos.y, pos.z) - meHrp.Position).Magnitude
-            distLabel = ("%dm"):format(math.floor(d))
+    -- Apply Highlight ESP on each warga
+    local highlights: { Highlight } = {}
+    for _, p in ipairs(playerList or {}) do
+        if typeof(p) == "Instance" and p:IsA("Player") then
+            local char = p.Character
+            if char then
+                local hl = Instance.new("Highlight")
+                hl.Name = "HackerESP"
+                hl.FillColor = Color3.fromRGB(255, 60, 80)
+                hl.OutlineColor = Color3.fromRGB(255, 200, 200)
+                hl.FillTransparency = 0.55
+                hl.OutlineTransparency = 0
+                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                hl.Adornee = char
+                hl.Parent = char
+                table.insert(highlights, hl)
+            end
         end
-        makeText(listFrame, {
-            LayoutOrder = i,
-            Size = UDim2.new(1, 0, 0, 20),
-            Text = ("• %s — %s"):format(pos.name, distLabel),
-            Font = Enum.Font.GothamSemibold,
-            TextColor3 = THEME.TEXT,
-            TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 42,
-        })
     end
 
-    -- Auto-update countdown + dismiss
+    -- Auto-update countdown + cleanup
     local startTime = os.clock()
     task.spawn(function()
         while hackerPanel and hackerPanel.Parent do
             local left = (duration or 0) - (os.clock() - startTime)
             if left <= 0 then
-                hackerPanel:Destroy()
+                if hackerPanel then hackerPanel:Destroy() end
                 hackerPanel = nil
+                for _, hl in ipairs(highlights) do
+                    if hl and hl.Parent then hl:Destroy() end
+                end
                 break
             end
             if title and title.Parent then
                 title.Text = ("💻 HACKER VISION • %.1fs"):format(left)
             end
             task.wait(0.1)
+        end
+        -- Final cleanup if loop exited unexpectedly
+        for _, hl in ipairs(highlights) do
+            if hl and hl.Parent then hl:Destroy() end
         end
     end)
 end
@@ -1444,10 +1439,11 @@ function UIBuilder.populateShop(shopState, callbacks)
         })
 
         local roleLabel = (item.role == Config.ROLE_PENIRU) and "Peniru" or "Warga"
+        local kindLabel = item.kind == "ability" and "SKILL" or "SKIN"
         makeText(frame, {
             Position = UDim2.new(0, 12, 0, 122),
             Size = UDim2.new(1, -24, 0, 16),
-            Text = ("Untuk %s • 🟡 %d"):format(roleLabel, item.price or 0),
+            Text = ("%s • Untuk %s • 🟡 %d"):format(kindLabel, roleLabel, item.price or 0),
             Font = Enum.Font.Gotham,
             TextColor3 = THEME.TEXT_DIM,
             TextSize = 12,
@@ -1455,15 +1451,47 @@ function UIBuilder.populateShop(shopState, callbacks)
             ZIndex = 63,
         })
 
+        if item.desc then
+            makeText(frame, {
+                Position = UDim2.new(0, 12, 0, 138),
+                Size = UDim2.new(1, -24, 0, 16),
+                Text = item.desc,
+                Font = Enum.Font.Gotham,
+                TextColor3 = THEME.TEXT_DIM,
+                TextSize = 11,
+                TextWrapped = true,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 63,
+            })
+        end
+
         local owned = (shopState.owned or {})[item.id] == true
-        local equipped = (shopState.equipped or {})[item.role] == item.id
+        local isAbility = item.kind == "ability"
+        local equipped = (not isAbility) and ((shopState.equipped or {})[item.role] == item.id)
+
+        local btnLabel, btnColor
+        if isAbility then
+            if owned then
+                btnLabel, btnColor = "TERSEDIA ✓", THEME.SUCCESS
+            else
+                btnLabel, btnColor = ("BELI 🟡" .. tostring(item.price or 0)), THEME.GOLD
+            end
+        else
+            if equipped then
+                btnLabel, btnColor = "TERPAKAI", THEME.SUCCESS
+            elseif owned then
+                btnLabel, btnColor = "PAKAI", THEME.ACCENT
+            else
+                btnLabel, btnColor = ("BELI 🟡" .. tostring(item.price or 0)), THEME.GOLD
+            end
+        end
 
         local btn = makeButton(frame, {
             AnchorPoint = Vector2.new(0, 1),
             Position = UDim2.new(0, 12, 1, -12),
             Size = UDim2.new(1, -24, 0, 36),
-            BackgroundColor3 = equipped and THEME.SUCCESS or (owned and THEME.ACCENT or THEME.GOLD),
-            Text = equipped and "TERPAKAI" or (owned and "PAKAI" or ("BELI 🟡" .. tostring(item.price or 0))),
+            BackgroundColor3 = btnColor,
+            Text = btnLabel,
             Font = Enum.Font.GothamBold,
             TextColor3 = Color3.fromRGB(20, 22, 28),
             TextSize = 14,
@@ -1473,11 +1501,16 @@ function UIBuilder.populateShop(shopState, callbacks)
         corner(btn, 10)
 
         btn.MouseButton1Click:Connect(function()
-            if equipped then return end
-            if owned then
-                if callbacks.onEquip then callbacks.onEquip(item.id) end
-            else
+            if isAbility then
+                if owned then return end
                 if callbacks.onPurchase then callbacks.onPurchase(item.id) end
+            else
+                if equipped then return end
+                if owned then
+                    if callbacks.onEquip then callbacks.onEquip(item.id) end
+                else
+                    if callbacks.onPurchase then callbacks.onPurchase(item.id) end
+                end
             end
         end)
     end

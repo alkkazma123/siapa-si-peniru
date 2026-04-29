@@ -73,6 +73,9 @@ Config.PRISON_CENTER      = Vector3.new(800, 8, 0)
 Config.PRISON_RADIUS      = 30
 Config.SPAWN_HEIGHT       = 6
 
+-- OVERHEAD
+Config.OVERHEAD_MAX_DISTANCE = 35  -- studs; only visible from this close
+
 -- THEME (dark minimal)
 Config.THEME = {
     BG          = Color3.fromRGB(15, 16, 22),
@@ -93,18 +96,33 @@ Config.THEME = {
     GOLD        = Color3.fromRGB(255, 200, 90),
 }
 
--- SHOP CATALOG (cosmetic skins; tints body color while in role)
--- Each item: { id, name, role ("Peniru"|"Warga"|"Any"), price, color, accent }
+-- SHOP CATALOG. Two categories:
+--   kind = "skin"    : tints body color when assigned that role
+--   kind = "ability" : unlocks a Peniru ability (Flash / Hacker)
+-- All items persist via DataStore (owned[id] = true, equipped[role] = id for skins)
 Config.SHOP = {
-    { id = "default_warga",  name = "Warga Default",   role = "Warga",  price = 0,    color = Color3.fromRGB(186, 152, 113) },
-    { id = "warga_blue",     name = "Warga Biru Laut", role = "Warga",  price = 120,  color = Color3.fromRGB(70, 140, 220) },
-    { id = "warga_neon",     name = "Warga Neon",      role = "Warga",  price = 220,  color = Color3.fromRGB(80, 250, 180) },
-    { id = "warga_gold",     name = "Warga Emas",      role = "Warga",  price = 450,  color = Color3.fromRGB(245, 200, 80) },
-    { id = "default_peniru", name = "Peniru Default",  role = "Peniru", price = 0,    color = Color3.fromRGB(70, 60, 70) },
-    { id = "peniru_red",     name = "Peniru Merah Tua",role = "Peniru", price = 150,  color = Color3.fromRGB(170, 40, 50) },
-    { id = "peniru_shadow",  name = "Peniru Bayangan", role = "Peniru", price = 280,  color = Color3.fromRGB(20, 20, 30) },
-    { id = "peniru_violet",  name = "Peniru Violet",   role = "Peniru", price = 500,  color = Color3.fromRGB(140, 70, 200) },
+    -- WARGA SKINS
+    { id = "default_warga",  name = "Warga Default",   kind = "skin", role = "Warga",  price = 0,    color = Color3.fromRGB(186, 152, 113) },
+    { id = "warga_blue",     name = "Warga Biru Laut", kind = "skin", role = "Warga",  price = 120,  color = Color3.fromRGB(70, 140, 220) },
+    { id = "warga_neon",     name = "Warga Neon",      kind = "skin", role = "Warga",  price = 220,  color = Color3.fromRGB(80, 250, 180) },
+    { id = "warga_gold",     name = "Warga Emas",      kind = "skin", role = "Warga",  price = 450,  color = Color3.fromRGB(245, 200, 80) },
+
+    -- PENIRU SKINS
+    { id = "default_peniru", name = "Peniru Default",  kind = "skin", role = "Peniru", price = 0,    color = Color3.fromRGB(70, 60, 70) },
+    { id = "peniru_red",     name = "Peniru Merah Tua",kind = "skin", role = "Peniru", price = 150,  color = Color3.fromRGB(170, 40, 50) },
+    { id = "peniru_shadow",  name = "Peniru Bayangan", kind = "skin", role = "Peniru", price = 280,  color = Color3.fromRGB(20, 20, 30) },
+    { id = "peniru_violet",  name = "Peniru Violet",   kind = "skin", role = "Peniru", price = 500,  color = Color3.fromRGB(140, 70, 200) },
+
+    -- PENIRU ABILITIES (unlockable, one-time purchase)
+    { id = "ability_flash",  name = "Skill: Flash",    kind = "ability", role = "Peniru", price = 600,  color = Color3.fromRGB(255, 200, 90),
+      desc = "Lari super cepat 5 detik. [F]" },
+    { id = "ability_hacker", name = "Skill: Hacker",   kind = "ability", role = "Peniru", price = 900,  color = Color3.fromRGB(64, 220, 200),
+      desc = "ESP: outline semua warga 4 detik. [H]" },
 }
+
+-- Ability item ids (used by GameManager to gate)
+Config.ABILITY_FLASH_ID  = "ability_flash"
+Config.ABILITY_HACKER_ID = "ability_hacker"
 
 -- DEFAULT EQUIPPED SKIN per role
 Config.DEFAULT_SKINS = {

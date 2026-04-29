@@ -238,12 +238,27 @@ function DataManager.equip(player: Player, itemId: string): (boolean, string)
     local item = findShopItem(itemId)
     if not item then return false, "Item tidak ditemukan" end
     if not p.owned[itemId] then return false, "Belum dimiliki" end
+    -- Abilities cannot be "equipped" — they are simply owned/unlocked.
+    if item.kind == "ability" then
+        return false, "Skill otomatis aktif setelah dibeli"
+    end
     if item.role ~= "Peniru" and item.role ~= "Warga" then
         return false, "Slot tidak valid"
     end
     p.equipped[item.role] = itemId
     p.dirty = true
     return true, "Berhasil dipakai"
+end
+
+function DataManager.owns(player: Player, itemId: string): boolean
+    local p = cache[player.UserId]
+    if not p then return false end
+    return p.owned[itemId] == true
+end
+
+function DataManager.saveNow(player: Player)
+    local p = cache[player.UserId]
+    if p then safeSave(player.UserId, p) end
 end
 
 function DataManager.getEquippedSkin(player: Player, roleName: string)
@@ -262,6 +277,12 @@ function DataManager.startAutoSave()
                     safeSave(userId, profile)
                 end
             end
+        end
+    end)
+    -- Persist on game shutdown (Studio test or live)
+    game:BindToClose(function()
+        for userId, profile in pairs(cache) do
+            pcall(function() safeSave(userId, profile) end)
         end
     end)
 end
