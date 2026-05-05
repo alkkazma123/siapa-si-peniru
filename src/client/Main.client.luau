@@ -357,8 +357,8 @@ if voteChatInput then
     end)
 end
 
-Remotes.event("VoteChatBroadcast").OnClientEvent:Connect(function(senderName, text, role)
-    UIBuilder.appendVoteChat(senderName, text, role)
+Remotes.event("VoteChatBroadcast").OnClientEvent:Connect(function(senderName, text)
+    UIBuilder.appendVoteChat(senderName, text)
 end)
 
 Remotes.event("WinAnnouncement").OnClientEvent:Connect(function(winningTeam, peniruPlayer)
