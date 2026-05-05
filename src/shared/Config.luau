@@ -81,6 +81,9 @@ Config.CITY_RADIUS        = 220
 Config.PRISON_CENTER      = Vector3.new(800, 8, 0)
 Config.PRISON_RADIUS      = 30
 Config.SPAWN_HEIGHT       = 6
+-- Y-coordinate below which a player is considered to have fallen into the void
+-- (city / lobby / prison floors all sit at y≈8, so -30 gives a clear margin).
+Config.VOID_Y             = -30
 
 -- OVERHEAD
 Config.OVERHEAD_MAX_DISTANCE = 35  -- studs; only visible from this close
