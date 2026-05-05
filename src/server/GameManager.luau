@@ -28,6 +28,7 @@ local hackerCooldown: { [number]: number } = {}
 local flashActiveUntil: { [number]: number } = {}
 local hackerActiveUntil: { [number]: number } = {}
 local votes: { [number]: number } = {}
+local peniruVoidFell = false   -- set true when Peniru falls into the void → Warga win
 local voteOpen        = false
 local roundStart      = 0
 local roundDuration   = 0
@@ -399,6 +400,7 @@ local function resetRound()
     flashActiveUntil = {}
     hackerActiveUntil = {}
     voteOpen = false
+    peniruVoidFell = false
     DisguiseSystem.restoreAll()
     resetWalkSpeeds()
     teleportAllToLobby()
@@ -518,6 +520,7 @@ end
 
 -- Round loop. Returns:
 --   "captureWin" : Peniru cleaned out warga (alive warga <= 1)
+--   "peniruVoid" : Peniru fell into the void → Warga win
 --   "timeout"    : timer expired without capture-win → go to voting
 local function roundLoop(extraSeconds: number?): string
     setState(Config.STATES.ROUND, { duration = roundDuration + (extraSeconds or 0) })
@@ -529,6 +532,9 @@ local function roundLoop(extraSeconds: number?): string
     while os.clock() - roundStart < thisDuration do
         local left = thisDuration - (os.clock() - roundStart)
         Remotes.event("TimerUpdate"):FireAllClients("Sisa Waktu", left)
+        if peniruVoidFell then
+            return "peniruVoid"
+        end
         if checkPeniruWin() then
             return "captureWin"
         end
@@ -610,6 +616,12 @@ local function gameLoop()
                 DisguiseSystem.restoreAll()
                 awardWinners(Config.ROLE_PENIRU)
                 revealLoop(Config.ROLE_PENIRU, peniruPlayer)
+                resolved = true
+            elseif outcome == "peniruVoid" then
+                local peniruPlayer = findPeniru()
+                DisguiseSystem.restoreAll()
+                awardWinners(Config.ROLE_WARGA)
+                revealLoop(Config.ROLE_WARGA, peniruPlayer)
                 resolved = true
             else
                 -- Timer expired: voting phase
@@ -768,7 +780,15 @@ function GameManager.init(deps)
                     local char = p.Character
                     local root = char and char:FindFirstChild("HumanoidRootPart")
                     if root and root.Position.Y < Config.VOID_Y then
-                        imprison(p, nil, "void")
+                        if roles[p.UserId] == Config.ROLE_PENIRU then
+                            -- Peniru falling into the void = instant Warga win.
+                            -- Just teleport them out of the void; gameLoop will end the round.
+                            peniruVoidFell = true
+                            teleportToPrison(p)
+                            notifyAll(("%s (Peniru) jatuh ke void! Warga menang!"):format(p.DisplayName), "success", 5)
+                        else
+                            imprison(p, nil, "void")
+                        end
                     end
                 end
             end
