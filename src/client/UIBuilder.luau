@@ -1700,12 +1700,9 @@ end
 -- vote chat (custom Among-Us style)
 ----------------------------------------------------------------
 
-local function colorForRole(role: string?)
-    if role == Config.ROLE_PENIRU then return THEME.PENIRU
-    elseif role == Config.ROLE_JOKER  then return THEME.JOKER
-    end
-    return THEME.WARGA
-end
+-- Vote chat name color: ALWAYS neutral. We deliberately do NOT vary by role
+-- because that would leak who the Peniru / Joker is during voting.
+local VOTE_CHAT_NAME_COLOR = THEME.ACCENT
 
 function UIBuilder.appendVoteChat(senderName: string, text: string, role: string?)
     if not voteChatLines then return end
@@ -1721,7 +1718,7 @@ function UIBuilder.appendVoteChat(senderName: string, text: string, role: string
         Size = UDim2.new(1, 0, 0, 16),
         Text = senderName,
         Font = Enum.Font.GothamBold,
-        TextColor3 = colorForRole(role),
+        TextColor3 = VOTE_CHAT_NAME_COLOR,
         TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 55,

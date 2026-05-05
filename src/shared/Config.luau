@@ -155,7 +155,7 @@ Config.REMOTES = {
         "ShopChanged",        -- ({owned = {...}, equipped = {Peniru=, Warga=}})
         "PurchaseResult",     -- (success, message, itemId)
         "VoteChatSend",       -- client -> server: (text)
-        "VoteChatBroadcast",  -- server -> all: (senderName, text, role)
+        "VoteChatBroadcast",  -- server -> all: (senderName, text)  role intentionally NOT sent
     },
     Functions = {
         "GetLeaderboard",

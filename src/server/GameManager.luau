@@ -726,7 +726,9 @@ function GameManager.init(deps)
         if #trimmed > Config.VOTE_CHAT_MAX_LEN then
             trimmed = trimmed:sub(1, Config.VOTE_CHAT_MAX_LEN)
         end
-        Remotes.event("VoteChatBroadcast"):FireAllClients(player.DisplayName, trimmed, roles[player.UserId])
+        -- IMPORTANT: do NOT send role over the network — that would leak the
+        -- Peniru/Joker identity to client mods. Voice color is uniform.
+        Remotes.event("VoteChatBroadcast"):FireAllClients(player.DisplayName, trimmed)
     end)
 
     Players.PlayerRemoving:Connect(function(player)
