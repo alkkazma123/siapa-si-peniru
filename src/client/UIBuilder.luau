@@ -118,6 +118,11 @@ local voteOverlay : Frame
 local voteList    : Frame
 local voteTitle   : TextLabel
 local voteResultPanel : Frame
+local voteChatPanel    : Frame
+local voteChatLines    : ScrollingFrame
+local voteChatInput    : TextBox
+local voteChatHooked   = false
+local voteCandidatesOrdered: { Player } = {}
 local revealPanel : Frame
 local roleRevealPanel : Frame
 local leaderboardBtn : TextButton
@@ -133,6 +138,8 @@ local rulesBtn      : TextButton
 local shopFrame     : Frame
 local rulesFrame    : Frame
 local loadingFrame  : Frame
+local disguiseFrame : Frame
+local disguiseList  : ScrollingFrame
 
 ----------------------------------------------------------------
 -- build
@@ -147,6 +154,37 @@ function UIBuilder.build()
     screenGui.IgnoreGuiInset = true
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = player:WaitForChild("PlayerGui")
+
+    -- Auto-scale: keep UI roughly the same density across PC/mobile by scaling
+    -- to the smaller axis of the viewport relative to the 1280x720 baseline.
+    local uiScale = Instance.new("UIScale")
+    uiScale.Name = "AutoScale"
+    uiScale.Scale = 1
+    uiScale.Parent = screenGui
+
+    local Workspace = game:GetService("Workspace")
+    local function recalcScale()
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
+        local v = cam.ViewportSize
+        if v.X < 1 or v.Y < 1 then return end
+        local s = math.min(v.X / 1280, v.Y / 720)
+        -- Clamp so it never goes too small on phones or absurdly big on 4K.
+        s = math.clamp(s, 0.65, 1.4)
+        uiScale.Scale = s
+    end
+    recalcScale()
+    task.spawn(function()
+        while screenGui.Parent do
+            local cam = Workspace.CurrentCamera
+            if cam then
+                cam:GetPropertyChangedSignal("ViewportSize"):Wait()
+                recalcScale()
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
 
     -- Top bar (timer + state + role badge)
     local topBar = makeFrame(screenGui, {
@@ -356,9 +394,9 @@ function UIBuilder.build()
 
     voteList = makeFrame(voteOverlay, {
         Name = "List",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, 20),
-        Size = UDim2.new(0, 720, 0, 360),
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 24, 0.5, 20),
+        Size = UDim2.new(1, -360, 0, 360),
         BackgroundTransparency = 1,
         ZIndex = 51,
     })
@@ -369,6 +407,74 @@ function UIBuilder.build()
     vgrid.VerticalAlignment = Enum.VerticalAlignment.Center
     vgrid.SortOrder = Enum.SortOrder.LayoutOrder
     vgrid.Parent = voteList
+
+    -- Vote chat panel (right side, Among-Us style)
+    voteChatPanel = makeFrame(voteOverlay, {
+        Name = "VoteChat",
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -16, 0.5, 0),
+        Size = UDim2.new(0, 320, 0, 460),
+        BackgroundColor3 = Color3.fromRGB(15, 18, 24),
+        BackgroundTransparency = 0.1,
+        ZIndex = 52,
+    })
+    corner(voteChatPanel, 12)
+    stroke(voteChatPanel, THEME.ACCENT, 1.5, 0.3)
+    pad(voteChatPanel, 10)
+
+    makeText(voteChatPanel, {
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 24),
+        Text = "💬 Chat Voting",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.ACCENT,
+        TextSize = 16,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 53,
+    })
+
+    voteChatLines = Instance.new("ScrollingFrame")
+    voteChatLines.Name = "Lines"
+    voteChatLines.Position = UDim2.new(0, 0, 0, 30)
+    voteChatLines.Size = UDim2.new(1, 0, 1, -76)
+    voteChatLines.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+    voteChatLines.BackgroundTransparency = 0.3
+    voteChatLines.BorderSizePixel = 0
+    voteChatLines.ScrollBarThickness = 4
+    voteChatLines.CanvasSize = UDim2.new(0, 0, 0, 0)
+    voteChatLines.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    voteChatLines.ZIndex = 53
+    voteChatLines.Parent = voteChatPanel
+    corner(voteChatLines, 8)
+    pad(voteChatLines, 6)
+
+    local linesLayout = Instance.new("UIListLayout")
+    linesLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    linesLayout.Padding = UDim.new(0, 4)
+    linesLayout.Parent = voteChatLines
+
+    voteChatInput = Instance.new("TextBox")
+    voteChatInput.Name = "Input"
+    voteChatInput.AnchorPoint = Vector2.new(0, 1)
+    voteChatInput.Position = UDim2.new(0, 0, 1, 0)
+    voteChatInput.Size = UDim2.new(1, 0, 0, 36)
+    voteChatInput.BackgroundColor3 = Color3.fromRGB(28, 31, 41)
+    voteChatInput.BorderSizePixel = 0
+    voteChatInput.PlaceholderText = "Ketik pesan… (Enter untuk kirim)"
+    voteChatInput.PlaceholderColor3 = THEME.TEXT_DIM
+    voteChatInput.Text = ""
+    voteChatInput.TextColor3 = THEME.TEXT
+    voteChatInput.Font = Enum.Font.Gotham
+    voteChatInput.TextSize = 14
+    voteChatInput.TextXAlignment = Enum.TextXAlignment.Left
+    voteChatInput.ClearTextOnFocus = false
+    voteChatInput.ZIndex = 53
+    voteChatInput.Parent = voteChatPanel
+    corner(voteChatInput, 8)
+    local inputPad = Instance.new("UIPadding")
+    inputPad.PaddingLeft = UDim.new(0, 10)
+    inputPad.PaddingRight = UDim.new(0, 10)
+    inputPad.Parent = voteChatInput
 
     -- Vote result tally
     voteResultPanel = makeFrame(screenGui, {
@@ -548,7 +654,7 @@ function UIBuilder.build()
         makeText(card, {
             Position = UDim2.new(0, 24, 0, 18),
             Size = UDim2.new(1, -160, 0, 32),
-            Text = "🛍  SHOP KARAKTER",
+            Text = "🛍  SHOP SKILL",
             Font = Enum.Font.GothamBlack,
             TextColor3 = THEME.ACCENT,
             TextSize = 22,
@@ -739,6 +845,79 @@ function UIBuilder.build()
         loadingFrame:SetAttribute("FillPath", fill:GetFullName())
     end
 
+    -- Disguise picker modal (Peniru clicks Q -> opens; pick a target by name)
+    disguiseFrame = makeFrame(screenGui, {
+        Name = "DisguisePicker",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, 460, 0, 420),
+        BackgroundColor3 = THEME.BG,
+        BackgroundTransparency = 0.05,
+        Visible = false,
+        ZIndex = 150,
+    })
+    corner(disguiseFrame, 16)
+    stroke(disguiseFrame, THEME.PENIRU, 2, 0.2)
+    pad(disguiseFrame, 16)
+
+    makeText(disguiseFrame, {
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 32),
+        Text = "🎭 Pilih siapa yang akan kamu tiru",
+        Font = Enum.Font.GothamBlack,
+        TextColor3 = THEME.PENIRU,
+        TextSize = 18,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 151,
+    })
+    makeText(disguiseFrame, {
+        Position = UDim2.new(0, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, 18),
+        Text = "Klik pemain dari daftar di bawah. ESC untuk batal.",
+        Font = Enum.Font.Gotham,
+        TextColor3 = THEME.TEXT_DIM,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 151,
+    })
+
+    disguiseList = Instance.new("ScrollingFrame")
+    disguiseList.Name = "List"
+    disguiseList.Position = UDim2.new(0, 0, 0, 64)
+    disguiseList.Size = UDim2.new(1, 0, 1, -110)
+    disguiseList.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+    disguiseList.BackgroundTransparency = 0.3
+    disguiseList.BorderSizePixel = 0
+    disguiseList.ScrollBarThickness = 6
+    disguiseList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    disguiseList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    disguiseList.ZIndex = 151
+    disguiseList.Parent = disguiseFrame
+    corner(disguiseList, 10)
+    pad(disguiseList, 8)
+    local dlist = Instance.new("UIListLayout")
+    dlist.SortOrder = Enum.SortOrder.LayoutOrder
+    dlist.Padding = UDim.new(0, 6)
+    dlist.Parent = disguiseList
+
+    local cancelBtn = makeButton(disguiseFrame, {
+        Name = "Cancel",
+        AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = THEME.SURFACE_ALT,
+        Text = "BATAL",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.TEXT,
+        TextSize = 14,
+        AutoButtonColor = true,
+        ZIndex = 151,
+    })
+    corner(cancelBtn, 10)
+    cancelBtn.MouseButton1Click:Connect(function()
+        disguiseFrame.Visible = false
+    end)
+
     return {
         screenGui = screenGui,
         captureBtn = captureBtn,
@@ -751,6 +930,7 @@ function UIBuilder.build()
         leaderboardList = lbList,
         shopBtn = shopBtn,
         rulesBtn = rulesBtn,
+        voteChatInput = voteChatInput,
     }
 end
 
@@ -781,6 +961,8 @@ function UIBuilder.setRole(role: string?)
     roleBadgeText.Text = string.upper(role)
     if role == Config.ROLE_PENIRU then
         roleBadgeText.TextColor3 = THEME.PENIRU
+    elseif role == Config.ROLE_JOKER then
+        roleBadgeText.TextColor3 = THEME.JOKER
     else
         roleBadgeText.TextColor3 = THEME.WARGA
     end
@@ -924,41 +1106,106 @@ function UIBuilder.openVote(candidates: { Player }, onVote: (Player) -> ())
     voteOverlay.BackgroundTransparency = 1
     TweenService:Create(voteOverlay, TweenInfo.new(0.4), { BackgroundTransparency = 0.25 }):Play()
 
+    voteCandidatesOrdered = {}
+    for i, p in ipairs(candidates) do voteCandidatesOrdered[i] = p end
+    UIBuilder.clearVoteChat()
+
     voteList:ClearAllChildren()
     local vgrid = Instance.new("UIGridLayout")
-    vgrid.CellSize = UDim2.new(0, 220, 0, 80)
+    vgrid.CellSize = UDim2.new(0, 240, 0, 96)
     vgrid.CellPadding = UDim2.new(0, 12, 0, 12)
     vgrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
     vgrid.VerticalAlignment = Enum.VerticalAlignment.Center
     vgrid.SortOrder = Enum.SortOrder.LayoutOrder
     vgrid.Parent = voteList
 
-    for _, p in ipairs(candidates) do
-        local btn = makeButton(voteList, {
+    for i, p in ipairs(candidates) do
+        local tile = makeFrame(voteList, {
             BackgroundColor3 = THEME.SURFACE,
-            Text = p.DisplayName .. "\n@" .. p.Name,
-            Font = Enum.Font.GothamSemibold,
-            TextSize = 16,
             ZIndex = 52,
+            LayoutOrder = i,
         })
-        corner(btn, 14)
-        stroke(btn, THEME.BORDER, 1.5, 0.3)
-        btn.MouseButton1Click:Connect(function()
+        corner(tile, 14)
+        stroke(tile, THEME.BORDER, 1.5, 0.3)
+
+        local btn = makeButton(tile, {
+            Position = UDim2.new(0, 0, 0, 0),
+            Size = UDim2.new(1, 0, 1, -28),
+            BackgroundTransparency = 1,
+            Text = ("[%d]   %s\n@%s"):format(i, p.DisplayName, p.Name),
+            Font = Enum.Font.GothamSemibold,
+            TextSize = 15,
+            TextColor3 = THEME.TEXT,
+            ZIndex = 53,
+            AutoButtonColor = true,
+        })
+        local chatHint = makeButton(tile, {
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 8, 1, -4),
+            Size = UDim2.new(1, -16, 0, 22),
+            BackgroundColor3 = THEME.BG_ALT,
+            Text = ("💬  (vote %s)"):format(p.Name),
+            Font = Enum.Font.Gotham,
+            TextSize = 11,
+            TextColor3 = THEME.TEXT_DIM,
+            ZIndex = 53,
+            AutoButtonColor = true,
+        })
+        corner(chatHint, 6)
+
+        local function castVoteHere()
             if voteCast then return end
             voteCast = true
             for _, child in ipairs(voteList:GetChildren()) do
-                if child:IsA("TextButton") and child ~= btn then
-                    child.AutoButtonColor = false
+                if child:IsA("Frame") and child ~= tile then
                     child.BackgroundTransparency = 0.5
-                    child.TextTransparency = 0.5
+                    for _, sub in ipairs(child:GetDescendants()) do
+                        if sub:IsA("TextButton") then
+                            sub.AutoButtonColor = false
+                        end
+                        if sub:IsA("TextLabel") or sub:IsA("TextButton") then
+                            sub.TextTransparency = 0.5
+                        end
+                    end
                 end
             end
-            btn.BackgroundColor3 = THEME.SUCCESS
+            tile.BackgroundColor3 = THEME.SUCCESS
             btn.TextColor3 = Color3.fromRGB(20, 22, 28)
-            pulse(btn, 1.08)
+            pulse(tile, 1.06)
             if voteCallback then voteCallback(p) end
+        end
+        btn.MouseButton1Click:Connect(castVoteHere)
+
+        chatHint.MouseButton1Click:Connect(function()
+            if voteChatInput then
+                voteChatInput.Text = ("(vote %s)"):format(p.Name)
+                voteChatInput:CaptureFocus()
+            end
         end)
     end
+end
+
+-- Vote by ordered index (used by 1-9 keyboard shortcut). Returns true on success.
+function UIBuilder.voteByIndex(idx: number): boolean
+    if voteCast then return false end
+    local p = voteCandidatesOrdered[idx]
+    if not p then return false end
+    if voteCallback then
+        voteCast = true
+        voteCallback(p)
+        return true
+    end
+    return false
+end
+
+function UIBuilder.isVoteOpen(): boolean
+    return voteOverlay and voteOverlay.Visible == true
+end
+
+function UIBuilder.getVoteCandidates(): { Player }
+    local out = {}
+    for i, p in ipairs(voteCandidatesOrdered) do out[i] = p end
+    return out
 end
 
 function UIBuilder.closeVote()
@@ -968,7 +1215,7 @@ function UIBuilder.closeVote()
     end
 end
 
-function UIBuilder.showVoteResult(tallyOut: { { name: string, count: number, userId: number } }, accusedName: string?, isPeniru: boolean)
+function UIBuilder.showVoteResult(tallyOut: { { name: string, count: number, userId: number } }, accusedName: string?, isPeniru: boolean, outcome: string?)
     voteResultPanel:ClearAllChildren()
     voteResultPanel.Visible = true
     voteResultPanel.BackgroundTransparency = 1
@@ -985,12 +1232,26 @@ function UIBuilder.showVoteResult(tallyOut: { { name: string, count: number, use
         ZIndex = 61,
     })
 
+    local subColor, subText
+    if outcome == "joker" then
+        subColor = THEME.JOKER
+        subText = accusedName and (accusedName .. " adalah JOKER!") or "Joker terpilih!"
+    elseif outcome == "peniru" or isPeniru then
+        subColor = THEME.SUCCESS
+        subText = accusedName and ("Tertuduh: " .. accusedName .. " (Peniru!)") or "Peniru ditemukan"
+    elseif outcome == "wrong" then
+        subColor = THEME.DANGER
+        subText = accusedName and ("Salah! " .. accusedName .. " adalah Warga.") or "Salah tebak."
+    else
+        subColor = THEME.WARN
+        subText = "Vote tidak konklusif — ronde lanjut"
+    end
     local sub = makeText(voteResultPanel, {
         Position = UDim2.new(0, 0, 0, 36),
         Size = UDim2.new(1, 0, 0, 22),
-        Text = accusedName and ("Tertuduh: " .. accusedName) or "Tidak ada tertuduh",
+        Text = subText,
         Font = Enum.Font.GothamSemibold,
-        TextColor3 = isPeniru and THEME.SUCCESS or THEME.DANGER,
+        TextColor3 = subColor,
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 61,
@@ -1067,7 +1328,10 @@ function UIBuilder.showRoleReveal(role: string, info: any)
         ZIndex = 81,
     })
     corner(card, 18)
-    local color = role == Config.ROLE_PENIRU and THEME.PENIRU or THEME.WARGA
+    local color
+    if role == Config.ROLE_PENIRU then color = THEME.PENIRU
+    elseif role == Config.ROLE_JOKER then color = THEME.JOKER
+    else color = THEME.WARGA end
     stroke(card, color, 2, 0)
 
     local roleLbl = makeText(card, {
@@ -1090,12 +1354,18 @@ function UIBuilder.showRoleReveal(role: string, info: any)
         TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 82,
     })
+    local descText
+    if role == Config.ROLE_PENIRU then
+        descText = "Tangkap dgn [E]. Menyamar dgn [Q]. Tangkap semua warga untuk menang."
+    elseif role == Config.ROLE_JOKER then
+        descText = "Kamu Joker. Berbaur dgn warga. Kalau berhasil di-vote, kamu menang!"
+    else
+        descText = "Cari Si Peniru. Vote dia di akhir ronde untuk menang."
+    end
     local desc = makeText(card, {
         Position = UDim2.new(0, 16, 0, 150),
         Size = UDim2.new(1, -32, 0, 70),
-        Text = role == Config.ROLE_PENIRU
-            and "Tangkap pemain dengan [E]. Menyamar dengan [Q]. Sisakan 1 survivor untuk menang."
-            or "Cari Si Peniru. Vote dia di akhir ronde untuk menang.",
+        Text = descText,
         Font = Enum.Font.Gotham,
         TextColor3 = THEME.TEXT,
         TextSize = 14,
@@ -1129,7 +1399,11 @@ function UIBuilder.showWinAnnouncement(winningTeam: string, peniruName: string?)
     revealPanel.BackgroundTransparency = 1
     TweenService:Create(revealPanel, TweenInfo.new(0.3), { BackgroundTransparency = 0.5 }):Play()
 
-    local color = winningTeam == "Warga" and THEME.WARGA or THEME.PENIRU
+    local color
+    if winningTeam == Config.ROLE_WARGA then color = THEME.WARGA
+    elseif winningTeam == Config.ROLE_JOKER then color = THEME.JOKER
+    else color = THEME.PENIRU end
+
     local title = makeText(revealPanel, {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, 0.5, -40),
@@ -1141,9 +1415,14 @@ function UIBuilder.showWinAnnouncement(winningTeam: string, peniruName: string?)
         TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 71,
     })
-    local subText = winningTeam == "Warga"
-        and (peniruName and ("Si Peniru: " .. peniruName) or "Si Peniru terungkap.")
-        or (peniruName and ("Si Peniru: " .. peniruName) or "Peniru berhasil bersembunyi.")
+    local subText
+    if winningTeam == Config.ROLE_JOKER then
+        subText = "Si Joker berhasil di-vote — chaos menang!"
+    elseif winningTeam == Config.ROLE_WARGA then
+        subText = peniruName and ("Si Peniru: " .. peniruName) or "Si Peniru terungkap."
+    else
+        subText = peniruName and ("Si Peniru: " .. peniruName) or "Peniru berhasil bersembunyi."
+    end
     local sub = makeText(revealPanel, {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, 0.5, 30),
@@ -1376,6 +1655,115 @@ end
 function UIBuilder.closeShop()
     if shopFrame then shopFrame.Visible = false end
 end
+
+----------------------------------------------------------------
+-- disguise picker
+----------------------------------------------------------------
+
+function UIBuilder.openDisguisePicker(candidates: { Player }, onPick: (Player) -> ())
+    if not disguiseFrame or not disguiseList then return end
+    -- Clear old buttons
+    for _, c in ipairs(disguiseList:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    for i, p in ipairs(candidates) do
+        local row = makeButton(disguiseList, {
+            Name = "Pick_" .. tostring(p.UserId),
+            Size = UDim2.new(1, -8, 0, 44),
+            BackgroundColor3 = THEME.SURFACE_ALT,
+            Text = ("  👤  %s   (@%s)"):format(p.DisplayName, p.Name),
+            Font = Enum.Font.GothamSemibold,
+            TextColor3 = THEME.TEXT,
+            TextSize = 15,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            AutoButtonColor = true,
+            LayoutOrder = i,
+            ZIndex = 152,
+        })
+        corner(row, 8)
+        stroke(row, THEME.BORDER, 1, 0.4)
+        row.MouseButton1Click:Connect(function()
+            disguiseFrame.Visible = false
+            if onPick then onPick(p) end
+        end)
+    end
+    disguiseFrame.Visible = true
+end
+
+function UIBuilder.closeDisguisePicker()
+    if disguiseFrame then disguiseFrame.Visible = false end
+end
+
+----------------------------------------------------------------
+-- vote chat (custom Among-Us style)
+----------------------------------------------------------------
+
+local function colorForRole(role: string?)
+    if role == Config.ROLE_PENIRU then return THEME.PENIRU
+    elseif role == Config.ROLE_JOKER  then return THEME.JOKER
+    end
+    return THEME.WARGA
+end
+
+function UIBuilder.appendVoteChat(senderName: string, text: string, role: string?)
+    if not voteChatLines then return end
+    local row = makeFrame(voteChatLines, {
+        Name = "Msg",
+        Size = UDim2.new(1, -8, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        ZIndex = 54,
+    })
+    local nameLbl = makeText(row, {
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 16),
+        Text = senderName,
+        Font = Enum.Font.GothamBold,
+        TextColor3 = colorForRole(role),
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 55,
+    })
+    nameLbl.Name = "Name"
+    local body = makeText(row, {
+        Position = UDim2.new(0, 0, 0, 16),
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Text = text,
+        Font = Enum.Font.Gotham,
+        TextColor3 = THEME.TEXT,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true,
+        ZIndex = 55,
+    })
+    body.Name = "Body"
+    -- ScrollingFrame auto-grows; nudge to bottom
+    task.defer(function()
+        if voteChatLines and voteChatLines.Parent then
+            voteChatLines.CanvasPosition = Vector2.new(0, 999999)
+        end
+    end)
+end
+
+function UIBuilder.clearVoteChat()
+    if not voteChatLines then return end
+    for _, c in ipairs(voteChatLines:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+end
+
+function UIBuilder.getVoteChatInput(): TextBox?
+    return voteChatInput
+end
+
+function UIBuilder.setVoteChatText(s: string)
+    if voteChatInput then voteChatInput.Text = s end
+end
+
+----------------------------------------------------------------
+-- shop
+----------------------------------------------------------------
 
 function UIBuilder.populateShop(shopState, callbacks)
     if not shopFrame then return end

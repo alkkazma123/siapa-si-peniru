@@ -17,7 +17,7 @@ local DisguiseSystem
 local mapInfo
 
 local state           = Config.STATES.LOBBY
-local roles: { [number]: string } = {}            -- userId -> base role (Peniru / Warga)
+local roles: { [number]: string } = {}            -- userId -> base role (Peniru / Warga / Joker)
 local subroles: { [number]: string } = {}         -- userId -> Angel (only)
 local alive: { [number]: boolean } = {}           -- userId -> alive
 local captured: { [number]: boolean } = {}        -- userId -> in prison
@@ -249,10 +249,12 @@ local function openVote()
     local candidates = getAlivePlayers()
     Remotes.event("VoteStart"):FireAllClients(candidates)
     playCueAll("VoteOpen", 0.7)
-    notifyAll("Voting dimulai! Pilih siapa Si Peniru.", "info", 3)
+    notifyAll("Voting dimulai! Pilih siapa Si Peniru. (Cuma yang masih hidup yg bisa vote)", "info", 3)
     -- Camera zoom is triggered on the client when receiving VoteStart
 end
 
+-- Returns: outcome, peniruPlayer, accusedPlayer
+--   outcome: "peniru" | "joker" | "wrong" | "skip" (tied / no vote)
 local function closeVote()
     voteOpen = false
     -- tally
@@ -286,7 +288,7 @@ local function closeVote()
     table.sort(tallyOut, function(a, b) return a.count > b.count end)
 
     local accusedPlayer = accusedUserId and Players:GetPlayerByUserId(accusedUserId) or nil
-    local isPeniru = accusedPlayer and (roles[accusedPlayer.UserId] == Config.ROLE_PENIRU) or false
+    local accusedRole   = accusedPlayer and roles[accusedPlayer.UserId] or nil
     local peniruPlayer = nil
     for uid, role in pairs(roles) do
         if role == Config.ROLE_PENIRU then
@@ -295,44 +297,53 @@ local function closeVote()
         end
     end
 
+    local outcome: string
     if tied or not accusedPlayer then
-        Remotes.event("VoteResult"):FireAllClients(tallyOut, nil, false, peniruPlayer)
-        notifyAll("Voting seri / tidak ada suara — Peniru lolos.", "warn", 4)
+        outcome = "skip"
+        -- send isPeniru=false so client UI shows neutral / wrong-vote message
+        Remotes.event("VoteResult"):FireAllClients(tallyOut, nil, false, peniruPlayer, "skip")
+        notifyAll("Voting seri / tidak ada suara — ronde lanjut.", "warn", 4)
+    elseif accusedRole == Config.ROLE_PENIRU then
+        outcome = "peniru"
+        Remotes.event("VoteResult"):FireAllClients(tallyOut, accusedPlayer, true, peniruPlayer, "peniru")
+        notifyAll(("Warga benar! %s adalah Si Peniru."):format(accusedPlayer.DisplayName), "success", 5)
+    elseif accusedRole == Config.ROLE_JOKER then
+        outcome = "joker"
+        Remotes.event("VoteResult"):FireAllClients(tallyOut, accusedPlayer, false, peniruPlayer, "joker")
+        notifyAll(("%s ternyata Joker — Joker menang!"):format(accusedPlayer.DisplayName), "warn", 5)
     else
-        Remotes.event("VoteResult"):FireAllClients(tallyOut, accusedPlayer, isPeniru, peniruPlayer)
-        if isPeniru then
-            notifyAll(("Warga benar! %s adalah Si Peniru."):format(accusedPlayer.DisplayName), "success", 5)
-        else
-            notifyAll(("Salah tebak! %s ternyata Warga."):format(accusedPlayer.DisplayName), "danger", 5)
-        end
+        outcome = "wrong"
+        Remotes.event("VoteResult"):FireAllClients(tallyOut, accusedPlayer, false, peniruPlayer, "wrong")
+        notifyAll(("Salah tebak! %s ternyata Warga — ronde lanjut."):format(accusedPlayer.DisplayName), "danger", 5)
     end
 
-    return isPeniru, peniruPlayer, accusedPlayer
+    return outcome, peniruPlayer, accusedPlayer
 end
 
 ----------------------------------------------------------------
 -- rewards
 ----------------------------------------------------------------
 
-local function awardWinners(wargaWin: boolean, peniruPlayer: Player?)
+-- winningTeam: "Peniru" | "Warga" | "Joker"
+local function awardWinners(winningTeam: string)
     for uid, role in pairs(roles) do
         local p = Players:GetPlayerByUserId(uid)
         if p then
             DataManager.addCoins(p, Config.COIN_PARTICIPATION)
-            if role == Config.ROLE_PENIRU then
-                if wargaWin then
-                    DataManager.addXp(p, Config.XP_LOSS)
-                else
+            local won = (role == winningTeam)
+            if won then
+                if role == Config.ROLE_PENIRU then
                     DataManager.addXp(p, Config.XP_WIN_PENIRU)
                     DataManager.addCoins(p, Config.COIN_WIN_PENIRU)
-                end
-            else
-                if wargaWin then
+                elseif role == Config.ROLE_JOKER then
+                    DataManager.addXp(p, Config.XP_WIN_JOKER)
+                    DataManager.addCoins(p, Config.COIN_WIN_JOKER)
+                else
                     DataManager.addXp(p, Config.XP_WIN_WARGA)
                     DataManager.addCoins(p, Config.COIN_WIN_WARGA)
-                else
-                    DataManager.addXp(p, Config.XP_LOSS)
                 end
+            else
+                DataManager.addXp(p, Config.XP_LOSS)
             end
             OverheadManager.refresh(p)
         end
@@ -348,11 +359,8 @@ local function setState(newState: string, payload: any?)
     broadcastState(payload)
 end
 
-local function applySkin(_player: Player, _role: string)
-    -- NOTE: Skin items are owned/equipped purely as collectibles; we intentionally
-    -- do NOT mutate the player's character colors anymore so the avatar stays
-    -- exactly as the player chose it on Roblox.
-end
+-- Skins removed: GameManager no longer mutates player visuals.
+local function applySkin(_player: Player, _role: string) end
 
 local function resetWalkSpeeds()
     for _, p in ipairs(Players:GetPlayers()) do
@@ -413,9 +421,26 @@ local function assignRoles()
 
     -- Pick 1 Peniru
     local peniruIdx = math.random(1, #players)
+
+    -- Decide whether we add a Joker this round (needs enough players)
+    local addJoker = (#players >= Config.JOKER_MIN_PLAYERS) and (Config.JOKER_PER_ROUND > 0)
+    local jokerIdx = nil
+    if addJoker then
+        repeat
+            jokerIdx = math.random(1, #players)
+        until jokerIdx ~= peniruIdx
+    end
+
     local wargaList: { Player } = {}
     for i, p in ipairs(players) do
-        local role = (i == peniruIdx) and Config.ROLE_PENIRU or Config.ROLE_WARGA
+        local role: string
+        if i == peniruIdx then
+            role = Config.ROLE_PENIRU
+        elseif jokerIdx and i == jokerIdx then
+            role = Config.ROLE_JOKER
+        else
+            role = Config.ROLE_WARGA
+        end
         roles[p.UserId] = role
         alive[p.UserId] = true
         if role == Config.ROLE_WARGA then
@@ -466,27 +491,29 @@ local function spawnActiveAtCity()
 end
 
 local function checkPeniruWin(): boolean
-    -- Peniru wins when only 1 non-Peniru is still alive (i.e. 1 survivor besides Peniru)
-    local peniruAlive = 0
+    -- Peniru wins when alive Warga count <= 1 ("warga sisa 1 penipu menang").
+    -- Joker is NOT counted as Warga.
     local wargaAlive = 0
     for uid, role in pairs(roles) do
-        if alive[uid] then
-            if role == Config.ROLE_PENIRU then peniruAlive += 1
-            else wargaAlive += 1 end
+        if alive[uid] and role == Config.ROLE_WARGA then
+            wargaAlive += 1
         end
     end
-    return peniruAlive >= 1 and wargaAlive <= 1
+    return wargaAlive <= 1
 end
 
-local function roundLoop(): string
-    -- Returns "captureWin" | "timeout"
-    setState(Config.STATES.ROUND, { duration = roundDuration })
+-- Round loop. Returns:
+--   "captureWin" : Peniru cleaned out warga (alive warga <= 1)
+--   "timeout"    : timer expired without capture-win → go to voting
+local function roundLoop(extraSeconds: number?): string
+    setState(Config.STATES.ROUND, { duration = roundDuration + (extraSeconds or 0) })
     playCueAll("RoundStart", 0.7)
 
     roundStart = os.clock()
+    local thisDuration = roundDuration + (extraSeconds or 0)
 
-    while os.clock() - roundStart < roundDuration do
-        local left = roundDuration - (os.clock() - roundStart)
+    while os.clock() - roundStart < thisDuration do
+        local left = thisDuration - (os.clock() - roundStart)
         Remotes.event("TimerUpdate"):FireAllClients("Sisa Waktu", left)
         if checkPeniruWin() then
             return "captureWin"
@@ -496,7 +523,7 @@ local function roundLoop(): string
     return "timeout"
 end
 
-local function votingLoop(): (boolean, Player?, Player?)
+local function votingLoop()
     setState(Config.STATES.VOTING, { duration = Config.VOTING_DURATION })
     openVote()
     for t = Config.VOTING_DURATION, 1, -1 do
@@ -509,7 +536,9 @@ end
 local function revealLoop(winningTeam: string, peniruPlayer: Player?)
     setState(Config.STATES.REVEAL, { winningTeam = winningTeam })
     Remotes.event("WinAnnouncement"):FireAllClients(winningTeam, peniruPlayer)
-    playCueAll(winningTeam == "Warga" and "WinChime" or "LoseChime", 0.8)
+    local cue = "WinChime"
+    if winningTeam == Config.ROLE_PENIRU then cue = "LoseChime" end
+    playCueAll(cue, 0.8)
     task.wait(Config.REVEAL_DURATION)
 end
 
@@ -524,6 +553,15 @@ end
 ----------------------------------------------------------------
 -- main loop
 ----------------------------------------------------------------
+
+local function findPeniru(): Player?
+    for uid, role in pairs(roles) do
+        if role == Config.ROLE_PENIRU then
+            return Players:GetPlayerByUserId(uid)
+        end
+    end
+    return nil
+end
 
 local function gameLoop()
     while true do
@@ -545,30 +583,40 @@ local function gameLoop()
         spawnActiveAtCity()
         broadcastAbilityCooldowns()
 
-        local outcome = roundLoop()
+        -- Round/Vote ping-pong: a wrong vote sends us back to ROUND.
+        -- Peniru-only-wins-by-capture is enforced by checkPeniruWin().
+        local resolved = false
+        local extraTime = 0
+        while not resolved do
+            local outcome = roundLoop(extraTime)
+            extraTime = 0  -- reset for next iteration; only carry over once
 
-        if outcome == "captureWin" then
-            -- Peniru wins by capturing enough Warga; skip vote
-            local peniruPlayer
-            for uid, role in pairs(roles) do
-                if role == Config.ROLE_PENIRU then
-                    peniruPlayer = Players:GetPlayerByUserId(uid)
-                    break
-                end
-            end
-            DisguiseSystem.restoreAll()
-            awardWinners(false, peniruPlayer)
-            revealLoop("Peniru", peniruPlayer)
-        else
-            -- timeout -> voting phase
-            local isPeniruVoted, peniruPlayer, _accused = votingLoop()
-            DisguiseSystem.restoreAll()
-            if isPeniruVoted then
-                awardWinners(true, peniruPlayer)
-                revealLoop("Warga", peniruPlayer)
+            if outcome == "captureWin" then
+                local peniruPlayer = findPeniru()
+                DisguiseSystem.restoreAll()
+                awardWinners(Config.ROLE_PENIRU)
+                revealLoop(Config.ROLE_PENIRU, peniruPlayer)
+                resolved = true
             else
-                awardWinners(false, peniruPlayer)
-                revealLoop("Peniru", peniruPlayer)
+                -- Timer expired: voting phase
+                local voteOutcome, peniruPlayer, _accused = votingLoop()
+                DisguiseSystem.restoreAll()
+
+                if voteOutcome == "peniru" then
+                    awardWinners(Config.ROLE_WARGA)
+                    revealLoop(Config.ROLE_WARGA, peniruPlayer)
+                    resolved = true
+                elseif voteOutcome == "joker" then
+                    awardWinners(Config.ROLE_JOKER)
+                    revealLoop(Config.ROLE_JOKER, peniruPlayer)
+                    resolved = true
+                else
+                    -- "wrong" or "skip": game continues, extend round timer
+                    notifyAll("Vote tidak menemukan Peniru — ronde lanjut!", "warn", 4)
+                    extraTime = Config.ROUND_EXTENSION
+                    -- Make sure the timer label resets to the round one
+                    Remotes.event("TimerUpdate"):FireAllClients("Sisa Waktu", extraTime)
+                end
             end
         end
 
@@ -587,12 +635,17 @@ function GameManager.init(deps)
     DisguiseSystem  = deps.DisguiseSystem
     mapInfo         = deps.mapInfo
 
-    -- Vote casting (client -> server)
+    -- Vote casting (client -> server). ONLY alive in-round players may vote.
     Remotes.event("VoteCast").OnServerEvent:Connect(function(player, target)
         if not voteOpen then return end
         if not roles[player.UserId] then return end
+        if not alive[player.UserId] then
+            notifyOne(player, "Kamu tidak bisa vote (di lobby/penjara).", "warn", 2)
+            return
+        end
         if typeof(target) ~= "Instance" or not target:IsA("Player") then return end
         if not roles[target.UserId] then return end
+        if not alive[target.UserId] then return end
         votes[player.UserId] = target.UserId
     end)
 
@@ -601,14 +654,43 @@ function GameManager.init(deps)
         tryCapture(player)
     end)
 
-    -- Disguise (client -> server)
+    -- Disguise: client -> server "open picker"
+    -- Server validates and replies with DisguisePickerOpen carrying the candidate list.
     Remotes.event("TryDisguise").OnServerEvent:Connect(function(player)
         if state ~= Config.STATES.ROUND then return end
         if roles[player.UserId] ~= Config.ROLE_PENIRU then return end
         if not alive[player.UserId] then return end
-        local excludeUserIds = { [player.UserId] = true }
-        local alivePlayers = getAlivePlayers()
-        local ok, _ = DisguiseSystem.tryDisguise(player, alivePlayers, excludeUserIds)
+        local cdEnd = DisguiseSystem.getCooldownEnd(player)
+        if cdEnd > os.clock() then
+            notifyOne(player, ("Disguise cooldown %.1fs"):format(cdEnd - os.clock()), "warn", 2)
+            return
+        end
+        -- Build candidate list (everyone alive except peniru themselves)
+        local candidates = {}
+        for _, p in ipairs(getAlivePlayers()) do
+            if p.UserId ~= player.UserId then
+                table.insert(candidates, p)
+            end
+        end
+        if #candidates == 0 then
+            notifyOne(player, "Tidak ada target untuk ditiru.", "warn", 2)
+            return
+        end
+        Remotes.event("DisguisePickerOpen"):FireClient(player, candidates)
+    end)
+
+    -- Client picked a target -> actually run disguise
+    Remotes.event("DisguisePick").OnServerEvent:Connect(function(player, target)
+        if state ~= Config.STATES.ROUND then return end
+        if roles[player.UserId] ~= Config.ROLE_PENIRU then return end
+        if not alive[player.UserId] then return end
+        if typeof(target) ~= "Instance" or not target:IsA("Player") then return end
+        if target.UserId == player.UserId then return end
+        if not alive[target.UserId] then
+            notifyOne(player, "Target sudah tidak ada di kota.", "warn", 2)
+            return
+        end
+        local ok, _ = DisguiseSystem.tryDisguise(player, target)
         if ok then
             notifyOne(player, "Penyamaran aktif!", "success", 2)
         else
@@ -623,6 +705,24 @@ function GameManager.init(deps)
     end)
     Remotes.event("TryHacker").OnServerEvent:Connect(function(player)
         tryHacker(player)
+    end)
+
+    -- Vote chat (client -> server -> all clients).
+    -- Only alive in-round players may speak; everyone receives.
+    Remotes.event("VoteChatSend").OnServerEvent:Connect(function(player, text)
+        if state ~= Config.STATES.VOTING then return end
+        if not roles[player.UserId] then return end
+        if not alive[player.UserId] then
+            notifyOne(player, "Kamu tidak bisa chat (di lobby/penjara).", "warn", 2)
+            return
+        end
+        if typeof(text) ~= "string" then return end
+        local trimmed = text:gsub("^%s+", ""):gsub("%s+$", "")
+        if #trimmed == 0 then return end
+        if #trimmed > Config.VOTE_CHAT_MAX_LEN then
+            trimmed = trimmed:sub(1, Config.VOTE_CHAT_MAX_LEN)
+        end
+        Remotes.event("VoteChatBroadcast"):FireAllClients(player.DisplayName, trimmed, roles[player.UserId])
     end)
 
     Players.PlayerRemoving:Connect(function(player)

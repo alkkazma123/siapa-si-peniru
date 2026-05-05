@@ -36,7 +36,6 @@ local cache: {
 
 local function defaultProfile()
     local owned = {}
-    -- All players start with default skins owned.
     for _, item in ipairs(Config.SHOP) do
         if item.price == 0 then owned[item.id] = true end
     end
@@ -45,10 +44,7 @@ local function defaultProfile()
         xp = 0,
         level = 1,
         owned = owned,
-        equipped = {
-            Peniru = Config.DEFAULT_SKINS.Peniru,
-            Warga  = Config.DEFAULT_SKINS.Warga,
-        },
+        equipped = {},   -- skin items removed; map kept for forward-compat
         dirty = false,
     }
 end
@@ -68,9 +64,11 @@ local function safeLoad(userId: number)
                 if v then profile.owned[k] = true end
             end
         end
+        -- equipped map kept for forward-compat but unused in current build
         if type(data.equipped) == "table" then
-            if type(data.equipped.Peniru) == "string" then profile.equipped.Peniru = data.equipped.Peniru end
-            if type(data.equipped.Warga)  == "string" then profile.equipped.Warga  = data.equipped.Warga end
+            for k, v in pairs(data.equipped) do
+                if type(v) == "string" then profile.equipped[k] = v end
+            end
         end
         return profile
     end
@@ -259,13 +257,6 @@ end
 function DataManager.saveNow(player: Player)
     local p = cache[player.UserId]
     if p then safeSave(player.UserId, p) end
-end
-
-function DataManager.getEquippedSkin(player: Player, roleName: string)
-    local p = cache[player.UserId]
-    if not p then return nil end
-    local id = p.equipped[roleName] or Config.DEFAULT_SKINS[roleName]
-    return findShopItem(id)
 end
 
 function DataManager.startAutoSave()

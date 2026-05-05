@@ -5,6 +5,8 @@ local Players           = game:GetService("Players")
 local UserInputService  = game:GetService("UserInputService")
 local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui        = game:GetService("StarterGui")
+local TextChatService   = game:GetService("TextChatService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config  = require(Shared:WaitForChild("Config"))
@@ -16,6 +18,50 @@ local SoundController = require(clientFolder:WaitForChild("SoundController"))
 local CameraController = require(clientFolder:WaitForChild("CameraController"))
 
 local player = Players.LocalPlayer
+
+----------------------------------------------------------------
+-- disable Roblox built-in chat (game uses custom vote chat only)
+----------------------------------------------------------------
+
+task.spawn(function()
+    -- Hide legacy chat coregui
+    for _ = 1, 5 do
+        local ok = pcall(function()
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+        end)
+        if ok then break end
+        task.wait(0.5)
+    end
+    -- Disable TextChatService channels (modern chat)
+    pcall(function()
+        for _, child in ipairs(TextChatService:GetDescendants()) do
+            if child:IsA("TextChannel") then
+                child:Destroy()
+            end
+        end
+    end)
+    -- Stop any future channels from being added
+    pcall(function()
+        TextChatService.DescendantAdded:Connect(function(d)
+            if d:IsA("TextChannel") then
+                pcall(function() d:Destroy() end)
+            end
+        end)
+    end)
+end)
+
+----------------------------------------------------------------
+-- camera zoom limit (anti map-cheese)
+----------------------------------------------------------------
+
+player.CameraMaxZoomDistance = Config.CAMERA_MAX_ZOOM
+player.CameraMinZoomDistance = Config.CAMERA_MIN_ZOOM
+-- Re-apply when respawning, since some Studio defaults can override
+player.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    player.CameraMaxZoomDistance = Config.CAMERA_MAX_ZOOM
+    player.CameraMinZoomDistance = Config.CAMERA_MIN_ZOOM
+end)
 
 ----------------------------------------------------------------
 -- boot UI + sounds
@@ -96,6 +142,19 @@ local function fireHacker()
     SoundController.play("Click", 0.4)
 end
 
+-- Map number keys 1-9 to Enum.KeyCode for vote shortcuts
+local NUM_KEYCODES: { [Enum.KeyCode]: number } = {
+    [Enum.KeyCode.One]   = 1,
+    [Enum.KeyCode.Two]   = 2,
+    [Enum.KeyCode.Three] = 3,
+    [Enum.KeyCode.Four]  = 4,
+    [Enum.KeyCode.Five]  = 5,
+    [Enum.KeyCode.Six]   = 6,
+    [Enum.KeyCode.Seven] = 7,
+    [Enum.KeyCode.Eight] = 8,
+    [Enum.KeyCode.Nine]  = 9,
+}
+
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Config.CAPTURE_KEY then
@@ -106,6 +165,11 @@ UserInputService.InputBegan:Connect(function(input, gp)
         fireFlash()
     elseif input.KeyCode == Config.HACKER_KEY then
         fireHacker()
+    end
+    -- Vote shortcut: 1-9 picks the i-th candidate while voting overlay is open
+    local idx = NUM_KEYCODES[input.KeyCode]
+    if idx and UIBuilder.isVoteOpen() then
+        UIBuilder.voteByIndex(idx)
     end
 end)
 
@@ -235,19 +299,76 @@ Remotes.event("VoteStart").OnClientEvent:Connect(function(candidates)
     end)
 end)
 
-Remotes.event("VoteResult").OnClientEvent:Connect(function(tally, accusedPlayer, isPeniru, peniruPlayer)
+Remotes.event("VoteResult").OnClientEvent:Connect(function(tally, accusedPlayer, isPeniru, peniruPlayer, outcome)
     UIBuilder.closeVote()
     local accusedName = accusedPlayer and accusedPlayer.DisplayName or nil
-    UIBuilder.showVoteResult(tally, accusedName, isPeniru)
+    UIBuilder.showVoteResult(tally, accusedName, isPeniru, outcome)
     if accusedPlayer and accusedPlayer.Character then
         CameraController.zoomReveal(accusedPlayer.Character)
     end
 end)
 
+----------------------------------------------------------------
+-- disguise picker (server -> client -> server)
+----------------------------------------------------------------
+
+Remotes.event("DisguisePickerOpen").OnClientEvent:Connect(function(candidates)
+    SoundController.play("Click", 0.4)
+    UIBuilder.openDisguisePicker(candidates, function(target)
+        Remotes.event("DisguisePick"):FireServer(target)
+    end)
+end)
+
+----------------------------------------------------------------
+-- custom vote chat (Among-Us style)
+----------------------------------------------------------------
+
+local function parseVoteShortcut(text: string): Player?
+    -- Match "(vote name)" - case insensitive, allow spaces
+    local _, _, name = string.find(text, "^%s*%(%s*[Vv][Oo][Tt][Ee]%s+([^%)]+)%)%s*$")
+    if not name then return nil end
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then return nil end
+    local lower = name:lower()
+    -- Match candidate by Name or DisplayName, case-insensitive
+    for _, p in ipairs(UIBuilder.getVoteCandidates()) do
+        if p.Name:lower() == lower or p.DisplayName:lower() == lower then
+            return p
+        end
+    end
+    return nil
+end
+
+local voteChatInput = ui.voteChatInput
+if voteChatInput then
+    voteChatInput.FocusLost:Connect(function(enterPressed)
+        if not enterPressed then return end
+        local text = voteChatInput.Text or ""
+        voteChatInput.Text = ""
+        if #text == 0 then return end
+        -- Auto-vote shortcut
+        local target = parseVoteShortcut(text)
+        if target and UIBuilder.isVoteOpen() then
+            Remotes.event("VoteCast"):FireServer(target)
+            UIBuilder.notify("Vote (chat): " .. target.DisplayName, "info", 2.5)
+        end
+        -- Always broadcast the message so others can see the discussion
+        Remotes.event("VoteChatSend"):FireServer(text)
+    end)
+end
+
+Remotes.event("VoteChatBroadcast").OnClientEvent:Connect(function(senderName, text, role)
+    UIBuilder.appendVoteChat(senderName, text, role)
+end)
+
 Remotes.event("WinAnnouncement").OnClientEvent:Connect(function(winningTeam, peniruPlayer)
     local name = peniruPlayer and peniruPlayer.DisplayName or nil
     UIBuilder.showWinAnnouncement(winningTeam, name)
-    SoundController.play(winningTeam == "Warga" and "WinChime" or "LoseChime", 0.7)
+    local cue = "LoseChime"
+    if winningTeam == Config.ROLE_WARGA or winningTeam == Config.ROLE_JOKER then
+        cue = "WinChime"
+    end
+    SoundController.play(cue, 0.7)
     if peniruPlayer and peniruPlayer.Character then
         CameraController.zoomReveal(peniruPlayer.Character)
     end
