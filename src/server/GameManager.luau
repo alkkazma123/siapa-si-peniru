@@ -111,6 +111,23 @@ end
 -- capture
 ----------------------------------------------------------------
 
+-- Common imprison path. Used by capture and by void-fall.
+-- cause: "capture" | "void"
+local function imprison(player: Player, by: Player?, cause: string)
+    if not roles[player.UserId] then return end
+    if not alive[player.UserId] then return end
+    alive[player.UserId] = false
+    captured[player.UserId] = true
+    teleportToPrison(player)
+    Remotes.event("Captured"):FireAllClients(player, by)
+    if cause == "void" then
+        notifyAll(("%s jatuh ke void dan dibawa ke penjara!"):format(player.DisplayName), "danger", 4)
+    else
+        notifyAll(("%s tertangkap dan dibawa ke penjara!"):format(player.DisplayName), "danger", 4)
+    end
+    playCueAll("Alarm", 0.6)
+end
+
 local function tryCapture(peniru: Player)
     if state ~= Config.STATES.ROUND then return end
     if roles[peniru.UserId] ~= Config.ROLE_PENIRU then return end
@@ -157,14 +174,7 @@ local function tryCapture(peniru: Player)
         return
     end
 
-    alive[target.UserId] = false
-    captured[target.UserId] = true
-    teleportToPrison(target)
-
-    Remotes.event("Captured"):FireAllClients(target, peniru)
-    notifyAll(("%s tertangkap dan dibawa ke penjara!"):format(target.DisplayName), "danger", 4)
-    playCueAll("Alarm", 0.6)
-
+    imprison(target, peniru, "capture")
     pushAbilityCooldowns(peniru)
 end
 
@@ -746,6 +756,24 @@ function GameManager.init(deps)
     end)
 
     task.spawn(gameLoop)
+
+    -- Void-fall monitor: during ROUND, any alive player whose root part falls
+    -- below Config.VOID_Y is treated as captured (sent to prison).
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            if state ~= Config.STATES.ROUND then continue end
+            for _, p in ipairs(Players:GetPlayers()) do
+                if alive[p.UserId] then
+                    local char = p.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if root and root.Position.Y < Config.VOID_Y then
+                        imprison(p, nil, "void")
+                    end
+                end
+            end
+        end
+    end)
 end
 
 function GameManager.getState(): string
