@@ -9,16 +9,16 @@ local SoundController = {}
 -- Roblox-provided free sounds (Sound IDs commonly used by community templates).
 -- These are stable Roblox-owned asset IDs that ship without copyright issues.
 local SOUND_LIBRARY: { [string]: { id: string, vol: number, looped: boolean? } } = {
-    BgmLobby   = { id = "rbxassetid://1839769293", vol = 0.25, looped = true },  -- chill ambient
-    BgmRound   = { id = "rbxassetid://9046317608", vol = 0.30, looped = true },  -- tense / mystery
-    Suspense   = { id = "rbxassetid://9117975149", vol = 0.45, looped = false },
-    Alarm      = { id = "rbxassetid://138081500",  vol = 0.55, looped = false },
-    Tick       = { id = "rbxassetid://12221967",   vol = 0.40, looped = false },
-    VoteOpen   = { id = "rbxassetid://3120909354", vol = 0.50, looped = false },
-    RoundStart = { id = "rbxassetid://9116784137", vol = 0.50, looped = false },
-    WinChime   = { id = "rbxassetid://9114149521", vol = 0.55, looped = false },
-    LoseChime  = { id = "rbxassetid://9114147660", vol = 0.55, looped = false },
-    Click      = { id = "rbxassetid://6895079853", vol = 0.40, looped = false },
+    BgmLobby   = { id = "rbxassetid://139765110669684", vol = 0.25, looped = true },  -- chill ambient
+    BgmRound   = { id = "rbxassetid://132192555681331", vol = 0.30, looped = true },  -- tense / mystery
+    Suspense   = { id = "rbxassetid://132105196113810", vol = 0.45, looped = false },
+    Alarm      = { id = "rbxassetid://138081500",       vol = 0.55, looped = false },
+    Tick       = { id = "rbxassetid://12221967",        vol = 0.40, looped = false },
+    VoteOpen   = { id = "rbxassetid://3120909354",      vol = 0.50, looped = false },
+    RoundStart = { id = "rbxassetid://2809363375",      vol = 0.50, looped = false },
+    WinChime   = { id = "rbxassetid://114272860575685", vol = 0.55, looped = false },
+    LoseChime  = { id = "rbxassetid://114272860575685", vol = 0.55, looped = false },
+    Click      = { id = "rbxassetid://6895079853",      vol = 0.40, looped = false },
 }
 
 local container: Folder
