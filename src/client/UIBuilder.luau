@@ -187,10 +187,11 @@ function UIBuilder.build()
     end)
 
     -- Top bar (timer + state + role badge)
+    -- y offset 52 = Roblox topbar (~36) + 16 padding so it doesn't collide.
     local topBar = makeFrame(screenGui, {
         Name = "TopBar",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 16),
+        Position = UDim2.new(0.5, 0, 0, 52),
         Size = UDim2.new(0, 480, 0, 56),
         BackgroundColor3 = THEME.BG,
         BackgroundTransparency = 0.05,
@@ -343,11 +344,11 @@ function UIBuilder.build()
     hackerBtn   = makeActionBtn("HackerBtn",   THEME.ACCENT_2, "HACKER\n[H]",    Color3.fromRGB(20, 22, 28), 4)
     voteBtn     = makeActionBtn("VoteBtn",     THEME.ACCENT_2, "VOTE\n[V]",      Color3.fromRGB(20, 22, 28), 5)
 
-    -- Notification stack (top-center, below top bar)
+    -- Notification stack (top-center, below top bar; topbar y=52 + height 56 + gap 12)
     notifyStack = makeFrame(screenGui, {
         Name = "Notifications",
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 84),
+        Position = UDim2.new(0.5, 0, 0, 120),
         Size = UDim2.new(0, 480, 0, 200),
         BackgroundTransparency = 1,
     })
@@ -511,9 +512,10 @@ function UIBuilder.build()
     })
 
     -- Top-left utility buttons (Leaderboard, Shop, Rules)
+    -- y offset 52 = Roblox topbar (~36) + 16 padding.
     local leftCol = makeFrame(screenGui, {
         Name = "LeftCol",
-        Position = UDim2.new(0, 16, 0, 16),
+        Position = UDim2.new(0, 16, 0, 52),
         Size = UDim2.new(0, 56, 0, 56 * 3 + 16),
         BackgroundTransparency = 1,
     })

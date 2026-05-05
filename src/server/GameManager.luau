@@ -348,6 +348,10 @@ local function awardWinners(winningTeam: string)
             OverheadManager.refresh(p)
         end
     end
+    -- Persist after each round so a server crash doesn't wipe the round's rewards.
+    if DataManager.saveAll then
+        task.spawn(DataManager.saveAll)
+    end
 end
 
 ----------------------------------------------------------------
