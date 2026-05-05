@@ -76,24 +76,46 @@ local function safeLoad(userId: number)
 end
 
 local function safeSave(userId: number, profile)
-    if not PROFILE_STORE then return end
-    pcall(function()
-        PROFILE_STORE:UpdateAsync("u_" .. userId, function(_)
-            return {
-                coins = profile.coins,
-                xp = profile.xp,
-                level = profile.level,
-                owned = profile.owned,
-                equipped = profile.equipped,
-            }
+    if not PROFILE_STORE then
+        warn(("[Peniru/DataStore] Skip save u_%d (no DataStore — enable 'Studio Access to API Services')"):format(userId))
+        return false
+    end
+    -- Retry up to 3 times with backoff to handle transient DataStore errors
+    local ok = false
+    local lastErr: string? = nil
+    for attempt = 1, 3 do
+        local success, err = pcall(function()
+            PROFILE_STORE:UpdateAsync("u_" .. userId, function(_)
+                return {
+                    coins = profile.coins,
+                    xp = profile.xp,
+                    level = profile.level,
+                    owned = profile.owned,
+                    equipped = profile.equipped,
+                    savedAt = os.time(),
+                }
+            end)
         end)
-    end)
+        if success then
+            ok = true
+            break
+        else
+            lastErr = tostring(err)
+            task.wait(1.5 * attempt)
+        end
+    end
     if LB_STORE then
         pcall(function()
             LB_STORE:SetAsync(tostring(userId), profile.level * 100000 + profile.xp)
         end)
     end
-    profile.dirty = false
+    if ok then
+        profile.dirty = false
+        print(("[Peniru/DataStore] Saved u_%d  coins=%d xp=%d lvl=%d"):format(userId, profile.coins, profile.xp, profile.level))
+    else
+        warn(("[Peniru/DataStore] FAILED to save u_%d after retries: %s"):format(userId, lastErr or "unknown"))
+    end
+    return ok
 end
 
 local function setupLeaderstats(player: Player, profile)
@@ -137,7 +159,8 @@ end
 
 function DataManager.onPlayerRemoving(player: Player)
     local profile = cache[player.UserId]
-    if profile and profile.dirty then
+    if profile then
+        -- Always save on leave (even if not flagged dirty) so latest snapshot wins.
         safeSave(player.UserId, profile)
     end
     cache[player.UserId] = nil
@@ -227,6 +250,8 @@ function DataManager.purchase(player: Player, itemId: string): (boolean, string)
     p.owned[itemId] = true
     p.dirty = true
     syncLeaderstats(player)
+    -- Save immediately so purchases never get lost (e.g. server crash).
+    task.spawn(function() safeSave(player.UserId, p) end)
     return true, "Berhasil membeli " .. item.name
 end
 
@@ -259,6 +284,21 @@ function DataManager.saveNow(player: Player)
     if p then safeSave(player.UserId, p) end
 end
 
+-- Save every cached dirty profile in parallel; returns when all done.
+function DataManager.saveAll()
+    local pending = 0
+    for userId, profile in pairs(cache) do
+        if profile.dirty then
+            pending += 1
+            task.spawn(function()
+                safeSave(userId, profile)
+                pending -= 1
+            end)
+        end
+    end
+    while pending > 0 do task.wait(0.1) end
+end
+
 function DataManager.startAutoSave()
     task.spawn(function()
         while true do
@@ -270,10 +310,20 @@ function DataManager.startAutoSave()
             end
         end
     end)
-    -- Persist on game shutdown (Studio test or live)
+    -- Persist on game shutdown (Studio test or live). BindToClose blocks the
+    -- shutdown for up to 30s, so flush every dirty profile in parallel.
     game:BindToClose(function()
+        local pending = 0
         for userId, profile in pairs(cache) do
-            pcall(function() safeSave(userId, profile) end)
+            pending += 1
+            task.spawn(function()
+                pcall(function() safeSave(userId, profile) end)
+                pending -= 1
+            end)
+        end
+        local deadline = os.clock() + 25
+        while pending > 0 and os.clock() < deadline do
+            task.wait(0.1)
         end
     end)
 end
