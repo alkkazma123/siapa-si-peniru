@@ -10,14 +10,20 @@ Config.ROUND_DURATION_BASE      = 45
 Config.ROUND_DURATION_PER_EXTRA = 5
 Config.ROUND_DURATION_MIN       = 30
 Config.ROUND_DURATION_MAX       = 60
-Config.VOTING_DURATION          = 20
+Config.ROUND_EXTENSION          = 30   -- after a wrong vote, give this many seconds back to round
+Config.VOTING_DURATION          = 25   -- a bit longer to allow chat discussion
 Config.REVEAL_DURATION          = 8
 Config.INTERMISSION             = 6
 
 -- ROLES
 Config.ROLE_PENIRU = "Peniru"
 Config.ROLE_WARGA  = "Warga"
+Config.ROLE_JOKER  = "Joker"  -- chaotic 3rd-faction; wins if voted out
 Config.ROLE_ANGEL  = "Angel"  -- sub-role of Warga, picked at random per round
+
+-- ROLE COUNTS
+Config.JOKER_PER_ROUND  = 1   -- requires MIN_PLAYERS >= 4 to spawn; auto-skips otherwise
+Config.JOKER_MIN_PLAYERS = 4  -- min players in round before a Joker is added
 
 -- WALK SPEEDS
 Config.WALK_SPEED_BASE  = 18
@@ -26,13 +32,14 @@ Config.JUMP_POWER       = 50
 
 -- ABILITY: CAPTURE (Peniru)
 Config.CAPTURE_RANGE     = 12
-Config.CAPTURE_COOLDOWN  = 10  -- bumped slightly so it feels intentional
+Config.CAPTURE_COOLDOWN  = 10
 Config.CAPTURE_KEY       = Enum.KeyCode.E
 
 -- ABILITY: DISGUISE (Peniru)
 Config.DISGUISE_COOLDOWN = 18
 Config.DISGUISE_DURATION = 15
 Config.DISGUISE_KEY      = Enum.KeyCode.Q
+Config.DISGUISE_PICK_RANGE = 0  -- 0 = no range, can pick anyone alive (full list)
 
 -- ABILITY: FLASH (Peniru)
 Config.FLASH_DURATION    = 5
@@ -55,9 +62,11 @@ Config.ANGEL_SHIELD_CHARGES = 1
 Config.XP_PER_LEVEL       = 100
 Config.XP_WIN_PENIRU      = 60
 Config.XP_WIN_WARGA       = 40
+Config.XP_WIN_JOKER       = 90
 Config.XP_LOSS            = 10
 Config.COIN_WIN_PENIRU    = 80
 Config.COIN_WIN_WARGA     = 55
+Config.COIN_WIN_JOKER     = 120
 Config.COIN_PARTICIPATION = 8
 
 -- GLOBAL LEADERBOARD
@@ -76,6 +85,13 @@ Config.SPAWN_HEIGHT       = 6
 -- OVERHEAD
 Config.OVERHEAD_MAX_DISTANCE = 35  -- studs; only visible from this close
 
+-- CAMERA
+Config.CAMERA_MAX_ZOOM   = 28      -- studs; cannot zoom out further (anti map-cheese)
+Config.CAMERA_MIN_ZOOM   = 0.5
+
+-- CHAT
+Config.VOTE_CHAT_MAX_LEN = 140
+
 -- THEME (dark minimal)
 Config.THEME = {
     BG          = Color3.fromRGB(15, 16, 22),
@@ -92,27 +108,15 @@ Config.THEME = {
     SUCCESS     = Color3.fromRGB(120, 230, 140),
     PENIRU      = Color3.fromRGB(255, 90, 110),
     WARGA       = Color3.fromRGB(120, 200, 255),
+    JOKER       = Color3.fromRGB(220, 110, 255),
     ANGEL       = Color3.fromRGB(255, 220, 130),
     GOLD        = Color3.fromRGB(255, 200, 90),
 }
 
--- SHOP CATALOG. Two categories:
---   kind = "skin"    : tints body color when assigned that role
+-- SHOP CATALOG. Ability-only (skin items removed by user request).
 --   kind = "ability" : unlocks a Peniru ability (Flash / Hacker)
--- All items persist via DataStore (owned[id] = true, equipped[role] = id for skins)
+-- All items persist via DataStore (owned[id] = true)
 Config.SHOP = {
-    -- WARGA SKINS
-    { id = "default_warga",  name = "Warga Default",   kind = "skin", role = "Warga",  price = 0,    color = Color3.fromRGB(186, 152, 113) },
-    { id = "warga_blue",     name = "Warga Biru Laut", kind = "skin", role = "Warga",  price = 120,  color = Color3.fromRGB(70, 140, 220) },
-    { id = "warga_neon",     name = "Warga Neon",      kind = "skin", role = "Warga",  price = 220,  color = Color3.fromRGB(80, 250, 180) },
-    { id = "warga_gold",     name = "Warga Emas",      kind = "skin", role = "Warga",  price = 450,  color = Color3.fromRGB(245, 200, 80) },
-
-    -- PENIRU SKINS
-    { id = "default_peniru", name = "Peniru Default",  kind = "skin", role = "Peniru", price = 0,    color = Color3.fromRGB(70, 60, 70) },
-    { id = "peniru_red",     name = "Peniru Merah Tua",kind = "skin", role = "Peniru", price = 150,  color = Color3.fromRGB(170, 40, 50) },
-    { id = "peniru_shadow",  name = "Peniru Bayangan", kind = "skin", role = "Peniru", price = 280,  color = Color3.fromRGB(20, 20, 30) },
-    { id = "peniru_violet",  name = "Peniru Violet",   kind = "skin", role = "Peniru", price = 500,  color = Color3.fromRGB(140, 70, 200) },
-
     -- PENIRU ABILITIES (unlockable, one-time purchase)
     { id = "ability_flash",  name = "Skill: Flash",    kind = "ability", role = "Peniru", price = 600,  color = Color3.fromRGB(255, 200, 90),
       desc = "Lari super cepat 5 detik. [F]" },
@@ -124,12 +128,6 @@ Config.SHOP = {
 Config.ABILITY_FLASH_ID  = "ability_flash"
 Config.ABILITY_HACKER_ID = "ability_hacker"
 
--- DEFAULT EQUIPPED SKIN per role
-Config.DEFAULT_SKINS = {
-    Peniru = "default_peniru",
-    Warga  = "default_warga",
-}
-
 -- Names of remotes (auto-created in ReplicatedStorage.Shared.Remotes)
 Config.REMOTES = {
     Events = {
@@ -140,7 +138,9 @@ Config.REMOTES = {
         "VoteCast",
         "VoteResult",
         "TryCapture",
-        "TryDisguise",
+        "TryDisguise",         -- ()  client asks to start disguise
+        "DisguisePickerOpen",  -- (candidates) server -> peniru: open picker UI
+        "DisguisePick",        -- (targetPlayer) client -> server: chosen target
         "TryFlash",
         "TryHacker",
         "DisguiseUpdated",
@@ -154,6 +154,8 @@ Config.REMOTES = {
         "HackerVision",       -- (positions {{name, pos}}, durationLeft)
         "ShopChanged",        -- ({owned = {...}, equipped = {Peniru=, Warga=}})
         "PurchaseResult",     -- (success, message, itemId)
+        "VoteChatSend",       -- client -> server: (text)
+        "VoteChatBroadcast",  -- server -> all: (senderName, text, role)
     },
     Functions = {
         "GetLeaderboard",

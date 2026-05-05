@@ -44,28 +44,6 @@ local function getHumanoid(player: Player): Humanoid?
     return char:FindFirstChildOfClass("Humanoid")
 end
 
-local function findNearestTarget(peniru: Player, alivePlayers: { Player }, excludeUserIds: { [number]: boolean }): Player?
-    local pchar = peniru.Character
-    if not pchar then return nil end
-    local pRoot = pchar:FindFirstChild("HumanoidRootPart")
-    if not pRoot then return nil end
-    local nearest, nearestDist = nil, math.huge
-    for _, p in ipairs(alivePlayers) do
-        if p ~= peniru and not excludeUserIds[p.UserId] then
-            local c = p.Character
-            local r = c and c:FindFirstChild("HumanoidRootPart")
-            if r then
-                local d = (r.Position - pRoot.Position).Magnitude
-                if d < nearestDist then
-                    nearestDist = d
-                    nearest = p
-                end
-            end
-        end
-    end
-    return nearest
-end
-
 local function hideCharacter(peniru: Player): Original?
     local char = peniru.Character
     if not char then return nil end
@@ -148,15 +126,20 @@ local function buildDummy(target: Player, displayName: string, level: number): M
 
     model.Name = "Disguise_" .. tostring(target.UserId)
 
-    -- Configure dummy parts
-    for _, part in ipairs(model:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = false
-            part.CanQuery = false
-            part.CanTouch = false
-            part.Massless = true
+    -- Configure all current parts to be non-collide / non-query / non-touch.
+    local function makeNonCollide(inst)
+        if inst:IsA("BasePart") then
+            inst.CanCollide = false
+            inst.CanQuery = false
+            inst.CanTouch = false
+            inst.Massless = true
         end
     end
+    for _, inst in ipairs(model:GetDescendants()) do
+        makeNonCollide(inst)
+    end
+    -- Also catch any descendants added later (e.g. accessories streaming in).
+    model.DescendantAdded:Connect(makeNonCollide)
 
     local dHum = model:FindFirstChildOfClass("Humanoid")
     if dHum then
@@ -262,19 +245,17 @@ local function startFollowLoop(peniru: Player, dummy: Model)
     activeConns[peniru.UserId] = conn
 end
 
-function DisguiseSystem.tryDisguise(peniru: Player, alivePlayers: { Player }, excludeUserIds: { [number]: boolean })
+function DisguiseSystem.tryDisguise(peniru: Player, target: Player)
     local now = os.clock()
     if (cooldowns[peniru.UserId] or 0) > now then
         return false, "Cooldown aktif"
     end
-    -- Already disguised? Refresh by reverting first
+    if not target or target == peniru then
+        return false, "Target tidak valid"
+    end
+    -- Already disguised? Revert first.
     if activeDummies[peniru.UserId] then
         DisguiseSystem.restore(peniru)
-    end
-
-    local target = findNearestTarget(peniru, alivePlayers, excludeUserIds)
-    if not target then
-        return false, "Tidak ada target di sekitar"
     end
 
     local profile = DataManager and DataManager.getProfile(target)
