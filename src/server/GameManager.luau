@@ -28,9 +28,21 @@ local hackerCooldown: { [number]: number } = {}
 local flashActiveUntil: { [number]: number } = {}
 local hackerActiveUntil: { [number]: number } = {}
 local votes: { [number]: number } = {}
+local peniruVoidFell = false   -- set true when Peniru falls into the void → Warga win
+local peniruKilledByDetektif = false  -- detektif correctly killed Peniru → Warga win
 local voteOpen        = false
 local roundStart      = 0
 local roundDuration   = 0
+local roundEnd        = 0  -- absolute os.clock() deadline of current round
+local nextMeetingAt   = math.huge  -- absolute os.clock() of next auto meeting
+
+-- Missions
+local missionAssignments: { [number]: { [string]: boolean } } = {}  -- userId -> {stationId = doneBool}
+local missionTotal = 0
+local missionDoneCount = 0
+
+-- Detektif kill usage tracking (one shot per round)
+local detektifUsed: { [number]: boolean } = {}
 
 ----------------------------------------------------------------
 -- helpers
@@ -334,18 +346,20 @@ end
 -- rewards
 ----------------------------------------------------------------
 
--- winningTeam: "Peniru" | "Warga" | "Joker"
+-- winningTeam: "Peniru" | "Warga" | "Joker"  (Detektif is part of the Warga team)
 local function awardWinners(winningTeam: string)
     for uid, role in pairs(roles) do
         local p = Players:GetPlayerByUserId(uid)
         if p then
             DataManager.addCoins(p, Config.COIN_PARTICIPATION)
-            local won = (role == winningTeam)
+            -- Detektif is treated as Warga side for win/loss purposes.
+            local effectiveRole = (role == Config.ROLE_DETEKTIF) and Config.ROLE_WARGA or role
+            local won = (effectiveRole == winningTeam)
             if won then
-                if role == Config.ROLE_PENIRU then
+                if effectiveRole == Config.ROLE_PENIRU then
                     DataManager.addXp(p, Config.XP_WIN_PENIRU)
                     DataManager.addCoins(p, Config.COIN_WIN_PENIRU)
-                elseif role == Config.ROLE_JOKER then
+                elseif effectiveRole == Config.ROLE_JOKER then
                     DataManager.addXp(p, Config.XP_WIN_JOKER)
                     DataManager.addCoins(p, Config.COIN_WIN_JOKER)
                 else
@@ -399,6 +413,12 @@ local function resetRound()
     flashActiveUntil = {}
     hackerActiveUntil = {}
     voteOpen = false
+    peniruVoidFell = false
+    peniruKilledByDetektif = false
+    missionAssignments = {}
+    missionTotal = 0
+    missionDoneCount = 0
+    detektifUsed = {}
     DisguiseSystem.restoreAll()
     resetWalkSpeeds()
     teleportAllToLobby()
@@ -436,13 +456,20 @@ local function assignRoles()
     -- Pick 1 Peniru
     local peniruIdx = math.random(1, #players)
 
-    -- Decide whether we add a Joker this round (needs enough players)
+    -- Decide whether we add a Joker / Detektif this round (needs enough players)
     local addJoker = (#players >= Config.JOKER_MIN_PLAYERS) and (Config.JOKER_PER_ROUND > 0)
-    local jokerIdx = nil
+    local addDetektif = (#players >= Config.DETEKTIF_MIN_PLAYERS) and (Config.DETEKTIF_PER_ROUND > 0)
+
+    local jokerIdx, detektifIdx = nil, nil
     if addJoker then
         repeat
             jokerIdx = math.random(1, #players)
         until jokerIdx ~= peniruIdx
+    end
+    if addDetektif then
+        repeat
+            detektifIdx = math.random(1, #players)
+        until detektifIdx ~= peniruIdx and detektifIdx ~= jokerIdx
     end
 
     local wargaList: { Player } = {}
@@ -452,6 +479,8 @@ local function assignRoles()
             role = Config.ROLE_PENIRU
         elseif jokerIdx and i == jokerIdx then
             role = Config.ROLE_JOKER
+        elseif detektifIdx and i == detektifIdx then
+            role = Config.ROLE_DETEKTIF
         else
             role = Config.ROLE_WARGA
         end
@@ -485,6 +514,7 @@ local function assignRoles()
             disguiseKey = Config.DISGUISE_KEY.Name,
             flashKey = Config.FLASH_KEY.Name,
             hackerKey = Config.HACKER_KEY.Name,
+            detektifKey = Config.DETEKTIF_KEY.Name,
             voteKey = Config.VOTE_KEY.Name,
             subRole = sub,
             shieldCharges = shields[p.UserId] or 0,
@@ -505,33 +535,141 @@ local function spawnActiveAtCity()
 end
 
 local function checkPeniruWin(): boolean
-    -- Peniru wins when alive Warga count <= 1 ("warga sisa 1 penipu menang").
-    -- Joker is NOT counted as Warga.
-    local wargaAlive = 0
+    -- Peniru wins when alive Warga + Detektif count <= 1.
+    -- Joker is independent and not counted.
+    local goodAlive = 0
     for uid, role in pairs(roles) do
-        if alive[uid] and role == Config.ROLE_WARGA then
-            wargaAlive += 1
+        if alive[uid] and (role == Config.ROLE_WARGA or role == Config.ROLE_DETEKTIF) then
+            goodAlive += 1
         end
     end
-    return wargaAlive <= 1
+    return goodAlive <= 1
+end
+
+local function checkMissionsComplete(): boolean
+    return missionTotal > 0 and missionDoneCount >= missionTotal
+end
+
+----------------------------------------------------------------
+-- missions (assignment + completion)
+----------------------------------------------------------------
+
+local function broadcastMissionProgress()
+    local pct = 0
+    if missionTotal > 0 then
+        pct = math.floor((missionDoneCount / missionTotal) * 100 + 0.5)
+    end
+    Remotes.event("MissionProgress"):FireAllClients(pct, missionDoneCount, missionTotal)
+end
+
+local function assignMissions()
+    missionAssignments = {}
+    missionTotal = 0
+    missionDoneCount = 0
+
+    local stations = mapInfo and mapInfo.missionStations or {}
+    if #stations == 0 then return end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        local role = roles[p.UserId]
+        -- Only Warga + Detektif get missions (Peniru / Joker do not).
+        if role == Config.ROLE_WARGA or role == Config.ROLE_DETEKTIF then
+            -- Pick MISSIONS_PER_PLAYER unique stations
+            local pool = {}
+            for _, s in ipairs(stations) do table.insert(pool, s) end
+            Util.shuffleInPlace(pool)
+            local n = math.min(Config.MISSIONS_PER_PLAYER, #pool)
+
+            local myList = {}
+            local mine: { [string]: boolean } = {}
+            for i = 1, n do
+                local st = pool[i]
+                mine[st.id] = false  -- false = pending, true = done
+                missionTotal += 1
+                table.insert(myList, { id = st.id, name = st.name, pos = st.pos })
+            end
+            missionAssignments[p.UserId] = mine
+            Remotes.event("MissionAssigned"):FireClient(p, myList)
+        end
+    end
+    broadcastMissionProgress()
+end
+
+local function onMissionTriggered(player: Player, stationId: string)
+    if state ~= Config.STATES.ROUND then return end
+    if not roles[player.UserId] then return end
+    if not alive[player.UserId] then return end
+    local mine = missionAssignments[player.UserId]
+    if not mine then return end
+    if mine[stationId] == nil then
+        -- Station exists but isn't assigned to this player. Silently ignore.
+        return
+    end
+    if mine[stationId] == true then return end  -- already done
+    mine[stationId] = true
+    missionDoneCount += 1
+    Remotes.event("MissionDone"):FireClient(player, stationId)
+    notifyOne(player, "Misi selesai!", "success", 1.5)
+    broadcastMissionProgress()
+end
+
+----------------------------------------------------------------
+-- detektif (kill ability)
+----------------------------------------------------------------
+
+local function tryDetektifKill(detektif: Player, target: Player)
+    if state ~= Config.STATES.ROUND and state ~= Config.STATES.VOTING then return end
+    if roles[detektif.UserId] ~= Config.ROLE_DETEKTIF then return end
+    if not alive[detektif.UserId] then return end
+    if detektifUsed[detektif.UserId] then
+        notifyOne(detektif, "Kekuatan Detektif sudah dipakai ronde ini.", "warn", 3)
+        return
+    end
+    if not target or typeof(target) ~= "Instance" or not target:IsA("Player") then return end
+    if target.UserId == detektif.UserId then return end
+    if not roles[target.UserId] then return end
+    if not alive[target.UserId] then return end
+
+    detektifUsed[detektif.UserId] = true
+    local targetRole = roles[target.UserId]
+    local correct = (targetRole == Config.ROLE_PENIRU)
+    Remotes.event("DetektifResult"):FireAllClients(detektif, target, correct)
+
+    if correct then
+        -- Detektif killed Peniru → Warga + Detektif menang
+        alive[target.UserId] = false
+        teleportToPrison(target)
+        peniruKilledByDetektif = true
+        notifyAll(("🔍 Detektif %s membunuh Peniru! Warga menang!"):format(detektif.DisplayName), "success", 5)
+        playCueAll("WinChime", 0.7)
+    else
+        -- Wrong target → Detektif sendiri masuk penjara
+        notifyAll(("🔍 Detektif %s salah orang! Detektif masuk penjara."):format(detektif.DisplayName), "danger", 5)
+        playCueAll("Alarm", 0.6)
+        imprison(detektif, nil, "wrong")
+    end
 end
 
 -- Round loop. Returns:
---   "captureWin" : Peniru cleaned out warga (alive warga <= 1)
---   "timeout"    : timer expired without capture-win → go to voting
-local function roundLoop(extraSeconds: number?): string
-    setState(Config.STATES.ROUND, { duration = roundDuration + (extraSeconds or 0) })
-    playCueAll("RoundStart", 0.7)
+--   "captureWin"   : Peniru cleaned out warga (alive warga+detektif <= 1)
+--   "peniruVoid"   : Peniru fell into the void → Warga win
+--   "peniruKilled" : Detektif correctly killed Peniru → Warga win
+--   "missionWin"   : All assigned missions complete → Warga win
+--   "meeting"      : Auto meeting interval reached → caller should run votingLoop, then loop back
+--   "timeout"      : Timer expired without resolution → go to final voting
+-- Uses module-level `roundEnd` (absolute deadline) and `nextMeetingAt`.
+local function roundLoop(): string
+    setState(Config.STATES.ROUND, { duration = math.max(0, roundEnd - os.clock()) })
+    playCueAll("RoundStart", 0.5)
 
-    roundStart = os.clock()
-    local thisDuration = roundDuration + (extraSeconds or 0)
-
-    while os.clock() - roundStart < thisDuration do
-        local left = thisDuration - (os.clock() - roundStart)
+    while os.clock() < roundEnd do
+        local left = roundEnd - os.clock()
         Remotes.event("TimerUpdate"):FireAllClients("Sisa Waktu", left)
-        if checkPeniruWin() then
-            return "captureWin"
-        end
+        if peniruVoidFell then return "peniruVoid" end
+        if peniruKilledByDetektif then return "peniruKilled" end
+        if checkPeniruWin() then return "captureWin" end
+        if checkMissionsComplete() then return "missionWin" end
+        if os.clock() >= nextMeetingAt then return "meeting" end
         task.wait(1)
     end
     return "timeout"
@@ -594,16 +732,20 @@ local function gameLoop()
             Config.ROUND_DURATION_MIN, Config.ROUND_DURATION_MAX)
 
         assignRoles()
+        assignMissions()
         spawnActiveAtCity()
         broadcastAbilityCooldowns()
+
+        -- Set absolute round deadline + first auto-meeting trigger.
+        roundStart = os.clock()
+        roundEnd = roundStart + roundDuration
+        nextMeetingAt = roundStart + Config.MEETING_FIRST_DELAY
 
         -- Round/Vote ping-pong: a wrong vote sends us back to ROUND.
         -- Peniru-only-wins-by-capture is enforced by checkPeniruWin().
         local resolved = false
-        local extraTime = 0
         while not resolved do
-            local outcome = roundLoop(extraTime)
-            extraTime = 0  -- reset for next iteration; only carry over once
+            local outcome = roundLoop()
 
             if outcome == "captureWin" then
                 local peniruPlayer = findPeniru()
@@ -611,8 +753,35 @@ local function gameLoop()
                 awardWinners(Config.ROLE_PENIRU)
                 revealLoop(Config.ROLE_PENIRU, peniruPlayer)
                 resolved = true
+            elseif outcome == "peniruVoid" or outcome == "peniruKilled" or outcome == "missionWin" then
+                local peniruPlayer = findPeniru()
+                DisguiseSystem.restoreAll()
+                awardWinners(Config.ROLE_WARGA)
+                revealLoop(Config.ROLE_WARGA, peniruPlayer)
+                resolved = true
+            elseif outcome == "meeting" then
+                -- Auto meeting: pause round, run a vote, then return to ROUND.
+                Remotes.event("MeetingCalled"):FireAllClients("auto")
+                notifyAll("Rapat darurat! Voting otomatis dimulai.", "warn", 3)
+                playCueAll("Suspense", 0.5)
+                local voteOutcome, peniruPlayer, _ = votingLoop()
+                DisguiseSystem.restoreAll()
+
+                if voteOutcome == "peniru" then
+                    awardWinners(Config.ROLE_WARGA)
+                    revealLoop(Config.ROLE_WARGA, peniruPlayer)
+                    resolved = true
+                elseif voteOutcome == "joker" then
+                    awardWinners(Config.ROLE_JOKER)
+                    revealLoop(Config.ROLE_JOKER, peniruPlayer)
+                    resolved = true
+                else
+                    -- Wrong / skip: schedule next meeting, return to ROUND
+                    notifyAll("Vote tidak menemukan Peniru — ronde lanjut!", "warn", 3)
+                    nextMeetingAt = os.clock() + Config.MEETING_INTERVAL
+                end
             else
-                -- Timer expired: voting phase
+                -- "timeout": final voting phase (round timer ran out)
                 local voteOutcome, peniruPlayer, _accused = votingLoop()
                 DisguiseSystem.restoreAll()
 
@@ -627,9 +796,8 @@ local function gameLoop()
                 else
                     -- "wrong" or "skip": game continues, extend round timer
                     notifyAll("Vote tidak menemukan Peniru — ronde lanjut!", "warn", 4)
-                    extraTime = Config.ROUND_EXTENSION
-                    -- Make sure the timer label resets to the round one
-                    Remotes.event("TimerUpdate"):FireAllClients("Sisa Waktu", extraTime)
+                    roundEnd = os.clock() + Config.ROUND_EXTENSION
+                    nextMeetingAt = os.clock() + Config.MEETING_INTERVAL
                 end
             end
         end
@@ -650,6 +818,8 @@ function GameManager.init(deps)
     mapInfo         = deps.mapInfo
 
     -- Vote casting (client -> server). ONLY alive in-round players may vote.
+    -- target == Player        → vote that player
+    -- target == "skip" or nil → cast a skip vote (uid 0)
     Remotes.event("VoteCast").OnServerEvent:Connect(function(player, target)
         if not voteOpen then return end
         if not roles[player.UserId] then return end
@@ -657,11 +827,29 @@ function GameManager.init(deps)
             notifyOne(player, "Kamu tidak bisa vote (di lobby/penjara).", "warn", 2)
             return
         end
+        if target == nil or target == "skip" or target == false then
+            votes[player.UserId] = 0  -- skip sentinel
+            return
+        end
         if typeof(target) ~= "Instance" or not target:IsA("Player") then return end
         if not roles[target.UserId] then return end
         if not alive[target.UserId] then return end
         votes[player.UserId] = target.UserId
     end)
+
+    -- Detektif kill (client -> server)
+    Remotes.event("DetektifKill").OnServerEvent:Connect(function(player, target)
+        tryDetektifKill(player, target)
+    end)
+
+    -- Wire ProximityPrompt.Triggered for each mission station.
+    if mapInfo and mapInfo.missionStations then
+        for _, st in ipairs(mapInfo.missionStations) do
+            st.prompt.Triggered:Connect(function(plr: Player)
+                onMissionTriggered(plr, st.id)
+            end)
+        end
+    end
 
     -- Capture (client -> server)
     Remotes.event("TryCapture").OnServerEvent:Connect(function(player)
@@ -768,7 +956,15 @@ function GameManager.init(deps)
                     local char = p.Character
                     local root = char and char:FindFirstChild("HumanoidRootPart")
                     if root and root.Position.Y < Config.VOID_Y then
-                        imprison(p, nil, "void")
+                        if roles[p.UserId] == Config.ROLE_PENIRU then
+                            -- Peniru falling into the void = instant Warga win.
+                            -- Just teleport them out of the void; gameLoop will end the round.
+                            peniruVoidFell = true
+                            teleportToPrison(p)
+                            notifyAll(("%s (Peniru) jatuh ke void! Warga menang!"):format(p.DisplayName), "success", 5)
+                        else
+                            imprison(p, nil, "void")
+                        end
                     end
                 end
             end

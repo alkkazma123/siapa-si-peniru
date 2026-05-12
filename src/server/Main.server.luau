@@ -96,6 +96,12 @@ Remotes.func("PurchaseItem").OnServerInvoke = function(player, itemId)
     end
     return { success = ok, message = msg }
 end
+Remotes.func("ClaimDailyLogin").OnServerInvoke = function(player)
+    return DataManager.claimDailyLogin(player)
+end
+Remotes.func("GetDailyLoginStatus").OnServerInvoke = function(player)
+    return DataManager.getDailyLoginStatus(player)
+end
 Remotes.func("EquipItem").OnServerInvoke = function(player, itemId)
     if typeof(itemId) ~= "string" then
         return { success = false, message = "Invalid item" }
