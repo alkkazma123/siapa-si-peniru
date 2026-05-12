@@ -140,6 +140,24 @@ local rulesFrame    : Frame
 local loadingFrame  : Frame
 local disguiseFrame : Frame
 local disguiseList  : ScrollingFrame
+-- Detektif kill UI
+local detektifBtn      : TextButton
+local detektifPanel    : Frame
+local detektifList     : ScrollingFrame
+local detektifSelected : Player?  = nil
+local detektifConfirmBtn : TextButton
+local detektifClosed   = false
+-- Mission UI
+local missionBar       : Frame
+local missionBarFill   : Frame
+local missionBarText   : TextLabel
+local missionListPanel : Frame
+local missionListItems : Frame
+local missionData: { id: string, name: string, done: boolean }? = nil
+-- Skip vote
+local voteSkipBtn      : TextButton
+-- Daily login modal
+local dailyFrame       : Frame
 
 ----------------------------------------------------------------
 -- build
@@ -920,6 +938,211 @@ function UIBuilder.build()
         disguiseFrame.Visible = false
     end)
 
+    ----------------------------------------------------------------
+    -- Mission UI: progress bar (top-center, below topbar) + mission list (right)
+    ----------------------------------------------------------------
+    missionBar = makeFrame(screenGui, {
+        Name = "MissionBar",
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 116),
+        Size = UDim2.new(0, 480, 0, 22),
+        BackgroundColor3 = Color3.fromRGB(20, 22, 30),
+        BackgroundTransparency = 0.15,
+        Visible = false,
+    })
+    corner(missionBar, 8)
+    stroke(missionBar, THEME.ACCENT, 1, 0.4)
+
+    missionBarFill = makeFrame(missionBar, {
+        Name = "Fill",
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = THEME.SUCCESS,
+    })
+    corner(missionBarFill, 8)
+
+    missionBarText = makeText(missionBar, {
+        Name = "Text",
+        Size = UDim2.fromScale(1, 1),
+        Text = "MISI 0%",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.TEXT,
+        TextSize = 13,
+        ZIndex = 5,
+    })
+
+    -- Mission list panel (left side, below LeftCol buttons)
+    missionListPanel = makeFrame(screenGui, {
+        Name = "MissionList",
+        Position = UDim2.new(0, 16, 0, 52 + 56 * 3 + 16 + 8),
+        Size = UDim2.new(0, 220, 0, 180),
+        BackgroundColor3 = THEME.BG,
+        BackgroundTransparency = 0.1,
+        Visible = false,
+    })
+    corner(missionListPanel, 12)
+    stroke(missionListPanel, THEME.BORDER, 1, 0.4)
+    pad(missionListPanel, 10)
+
+    makeText(missionListPanel, {
+        Name = "Title",
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 18),
+        Text = "🗒 MISI KAMU",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.ACCENT,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    missionListItems = Instance.new("Frame")
+    missionListItems.Name = "Items"
+    missionListItems.Position = UDim2.new(0, 0, 0, 24)
+    missionListItems.Size = UDim2.new(1, 0, 1, -24)
+    missionListItems.BackgroundTransparency = 1
+    missionListItems.Parent = missionListPanel
+    local mlist = Instance.new("UIListLayout")
+    mlist.SortOrder = Enum.SortOrder.LayoutOrder
+    mlist.Padding = UDim.new(0, 4)
+    mlist.Parent = missionListItems
+
+    ----------------------------------------------------------------
+    -- Skip vote button (in vote overlay, bottom-center)
+    ----------------------------------------------------------------
+    voteSkipBtn = makeButton(voteOverlay, {
+        Name = "SkipVote",
+        AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, -32),
+        Size = UDim2.new(0, 240, 0, 44),
+        BackgroundColor3 = THEME.SURFACE,
+        Text = "SKIP VOTE",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.TEXT,
+        TextSize = 16,
+        AutoButtonColor = true,
+        ZIndex = 53,
+    })
+    corner(voteSkipBtn, 10)
+    stroke(voteSkipBtn, THEME.BORDER, 1.5, 0.3)
+
+    ----------------------------------------------------------------
+    -- Detektif kill button + panel
+    ----------------------------------------------------------------
+    detektifBtn = makeButton(mobileButtons, {
+        Name = "DetektifBtn",
+        Size = UDim2.new(0, 70, 0, 70),
+        BackgroundColor3 = Color3.fromRGB(255, 230, 130),
+        Text = "DETEKTIF\n[G]",
+        TextColor3 = Color3.fromRGB(20, 22, 28),
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        AutoButtonColor = true,
+        Visible = false,
+        LayoutOrder = 6,
+    })
+    corner(detektifBtn, 14)
+    stroke(detektifBtn, THEME.BORDER, 1, 0.4)
+
+    detektifPanel = makeFrame(screenGui, {
+        Name = "DetektifPanel",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, 460, 0, 480),
+        BackgroundColor3 = THEME.BG,
+        BackgroundTransparency = 0.05,
+        Visible = false,
+        ZIndex = 200,
+    })
+    corner(detektifPanel, 14)
+    stroke(detektifPanel, Color3.fromRGB(255, 230, 130), 2, 0.2)
+    pad(detektifPanel, 14)
+
+    makeText(detektifPanel, {
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 28),
+        Text = "🔍 DETEKTIF — TEMBAK PENIRU",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = Color3.fromRGB(255, 230, 130),
+        TextSize = 18,
+        ZIndex = 201,
+    })
+    makeText(detektifPanel, {
+        Position = UDim2.new(0, 0, 0, 30),
+        Size = UDim2.new(1, 0, 0, 18),
+        Text = "Salah orang = kamu masuk penjara. Sekali pakai per ronde.",
+        Font = Enum.Font.Gotham,
+        TextColor3 = THEME.TEXT_DIM,
+        TextSize = 12,
+        ZIndex = 201,
+    })
+
+    detektifList = Instance.new("ScrollingFrame")
+    detektifList.Name = "List"
+    detektifList.Position = UDim2.new(0, 0, 0, 56)
+    detektifList.Size = UDim2.new(1, 0, 1, -110)
+    detektifList.BackgroundColor3 = THEME.BG_ALT
+    detektifList.BorderSizePixel = 0
+    detektifList.ScrollBarThickness = 4
+    detektifList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    detektifList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    detektifList.ZIndex = 201
+    detektifList.Parent = detektifPanel
+    corner(detektifList, 10)
+    pad(detektifList, 8)
+    local dkLayout = Instance.new("UIListLayout")
+    dkLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    dkLayout.Padding = UDim.new(0, 6)
+    dkLayout.Parent = detektifList
+
+    detektifConfirmBtn = makeButton(detektifPanel, {
+        Name = "Confirm",
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(0.6, -4, 0, 44),
+        BackgroundColor3 = THEME.DANGER,
+        Text = "CONFIRM KILL",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.TEXT,
+        TextSize = 16,
+        AutoButtonColor = true,
+        ZIndex = 201,
+    })
+    corner(detektifConfirmBtn, 10)
+    local detektifCancel = makeButton(detektifPanel, {
+        Name = "Cancel",
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, 0, 1, 0),
+        Size = UDim2.new(0.4, -4, 0, 44),
+        BackgroundColor3 = THEME.SURFACE_ALT,
+        Text = "BATAL",
+        Font = Enum.Font.GothamBold,
+        TextColor3 = THEME.TEXT,
+        TextSize = 14,
+        AutoButtonColor = true,
+        ZIndex = 201,
+    })
+    corner(detektifCancel, 10)
+    detektifCancel.MouseButton1Click:Connect(function()
+        detektifPanel.Visible = false
+        detektifSelected = nil
+    end)
+
+    ----------------------------------------------------------------
+    -- Daily login modal
+    ----------------------------------------------------------------
+    dailyFrame = makeFrame(screenGui, {
+        Name = "DailyLogin",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.new(0, 360, 0, 220),
+        BackgroundColor3 = THEME.BG,
+        BackgroundTransparency = 0.05,
+        Visible = false,
+        ZIndex = 220,
+    })
+    corner(dailyFrame, 14)
+    stroke(dailyFrame, THEME.WARN, 2, 0.2)
+    pad(dailyFrame, 16)
+
     return {
         screenGui = screenGui,
         captureBtn = captureBtn,
@@ -927,12 +1150,14 @@ function UIBuilder.build()
         flashBtn = flashBtn,
         hackerBtn = hackerBtn,
         voteBtn = voteBtn,
+        detektifBtn = detektifBtn,
         leaderboardBtn = leaderboardBtn,
         leaderboardPanel = leaderboardPanel,
         leaderboardList = lbList,
         shopBtn = shopBtn,
         rulesBtn = rulesBtn,
         voteChatInput = voteChatInput,
+        voteSkipBtn = voteSkipBtn,
     }
 end
 
@@ -965,6 +1190,8 @@ function UIBuilder.setRole(role: string?)
         roleBadgeText.TextColor3 = THEME.PENIRU
     elseif role == Config.ROLE_JOKER then
         roleBadgeText.TextColor3 = THEME.JOKER
+    elseif role == Config.ROLE_DETEKTIF then
+        roleBadgeText.TextColor3 = THEME.DETEKTIF or Color3.fromRGB(255, 230, 130)
     else
         roleBadgeText.TextColor3 = THEME.WARGA
     end
@@ -986,11 +1213,17 @@ end
 function UIBuilder.setActionButtons(role: string?, isVoting: boolean)
     if not captureBtn then return end
     local penIngame = role == Config.ROLE_PENIRU and not isVoting
+    local detIngame = role == Config.ROLE_DETEKTIF and not isVoting
     captureBtn.Visible  = penIngame
     disguiseBtn.Visible = penIngame
     flashBtn.Visible    = penIngame
     hackerBtn.Visible   = penIngame
     voteBtn.Visible     = isVoting and role ~= nil
+    if detektifBtn then detektifBtn.Visible = detIngame end
+    -- Mission UI is for Warga + Detektif during round
+    local missionEligible = (role == Config.ROLE_WARGA or role == Config.ROLE_DETEKTIF) and not isVoting
+    if missionBar then missionBar.Visible = missionEligible end
+    if missionListPanel then missionListPanel.Visible = missionEligible end
 end
 
 function UIBuilder.setAbilityCooldowns(data)
@@ -1901,6 +2134,224 @@ function UIBuilder.populateShop(shopState, callbacks)
             end
         end)
     end
+end
+
+----------------------------------------------------------------
+-- Mission UI helpers
+----------------------------------------------------------------
+
+function UIBuilder.setMissionList(missions: { { id: string, name: string, pos: Vector3 } })
+    if not missionListItems then return end
+    missionListItems:ClearAllChildren()
+    local mlist = Instance.new("UIListLayout")
+    mlist.SortOrder = Enum.SortOrder.LayoutOrder
+    mlist.Padding = UDim.new(0, 4)
+    mlist.Parent = missionListItems
+
+    missionData = {}
+    for i, m in ipairs(missions or {}) do
+        table.insert(missionData, { id = m.id, name = m.name, done = false })
+        local row = Instance.new("TextLabel")
+        row.Name = m.id
+        row.LayoutOrder = i
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 18)
+        row.Text = ("• %s"):format(m.name)
+        row.Font = Enum.Font.Gotham
+        row.TextSize = 12
+        row.TextColor3 = THEME.TEXT
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Parent = missionListItems
+    end
+end
+
+function UIBuilder.markMissionDone(stationId: string)
+    if not missionListItems or not missionData then return end
+    for _, m in ipairs(missionData) do
+        if m.id == stationId then m.done = true end
+    end
+    local row = missionListItems:FindFirstChild(stationId)
+    if row and row:IsA("TextLabel") then
+        row.Text = ("✓ %s"):format(row.Text:gsub("^[•✓]%s*", ""))
+        row.TextColor3 = THEME.SUCCESS
+    end
+end
+
+function UIBuilder.setMissionProgress(pct: number, done: number, total: number)
+    if not missionBar then return end
+    local p = math.clamp((pct or 0) / 100, 0, 1)
+    TweenService:Create(missionBarFill, TweenInfo.new(0.3), {
+        Size = UDim2.new(p, 0, 1, 0),
+    }):Play()
+    missionBarText.Text = string.format("MISI %d%%   (%d / %d)", math.floor(pct or 0), done or 0, total or 0)
+end
+
+function UIBuilder.clearMissions()
+    if missionListItems then missionListItems:ClearAllChildren() end
+    missionData = nil
+    if missionBar then missionBar.Visible = false end
+    if missionListPanel then missionListPanel.Visible = false end
+    if missionBarFill then missionBarFill.Size = UDim2.new(0, 0, 1, 0) end
+end
+
+----------------------------------------------------------------
+-- Skip vote
+----------------------------------------------------------------
+
+local _skipVoteConn: RBXScriptConnection? = nil
+function UIBuilder.bindSkipVote(onSkip: () -> ())
+    if not voteSkipBtn then return end
+    if _skipVoteConn then _skipVoteConn:Disconnect() end
+    _skipVoteConn = voteSkipBtn.MouseButton1Click:Connect(function()
+        if onSkip then onSkip() end
+    end)
+end
+
+----------------------------------------------------------------
+-- Detektif kill panel
+----------------------------------------------------------------
+
+local _detektifConn: RBXScriptConnection? = nil
+
+function UIBuilder.openDetektif(candidates: { Player }, onConfirm: (Player) -> ())
+    if not detektifPanel then return end
+    detektifSelected = nil
+    detektifPanel.Visible = true
+    detektifList:ClearAllChildren()
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 6)
+    layout.Parent = detektifList
+
+    local rows: { TextButton } = {}
+    for i, p in ipairs(candidates) do
+        local row = makeButton(detektifList, {
+            Name = "Cand_" .. tostring(p.UserId),
+            LayoutOrder = i,
+            Size = UDim2.new(1, 0, 0, 40),
+            BackgroundColor3 = THEME.SURFACE,
+            Text = ("   %s   (@%s)"):format(p.DisplayName, p.Name),
+            Font = Enum.Font.GothamSemibold,
+            TextColor3 = THEME.TEXT,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 202,
+        })
+        corner(row, 8)
+        stroke(row, THEME.BORDER, 1, 0.5)
+        table.insert(rows, row)
+
+        row.MouseButton1Click:Connect(function()
+            detektifSelected = p
+            for _, r in ipairs(rows) do
+                r.BackgroundColor3 = THEME.SURFACE
+            end
+            row.BackgroundColor3 = THEME.DANGER
+        end)
+    end
+
+    -- Rewire confirm with a tracked connection so we don't stack handlers.
+    if _detektifConn then _detektifConn:Disconnect() end
+    _detektifConn = detektifConfirmBtn.MouseButton1Click:Connect(function()
+        if not detektifSelected then return end
+        if onConfirm then onConfirm(detektifSelected) end
+        detektifPanel.Visible = false
+        detektifSelected = nil
+        if _detektifConn then
+            _detektifConn:Disconnect()
+            _detektifConn = nil
+        end
+    end)
+end
+
+function UIBuilder.toggleDetektif(): boolean
+    if not detektifPanel then return false end
+    detektifPanel.Visible = not detektifPanel.Visible
+    return detektifPanel.Visible
+end
+
+function UIBuilder.closeDetektif()
+    if detektifPanel then detektifPanel.Visible = false end
+    detektifSelected = nil
+end
+
+----------------------------------------------------------------
+-- Daily login modal
+----------------------------------------------------------------
+
+local function fmtTime(secs: number): string
+    secs = math.max(0, math.floor(secs or 0))
+    local h = math.floor(secs / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    local s = secs % 60
+    if h > 0 then return string.format("%dj %dm", h, m) end
+    if m > 0 then return string.format("%dm %ds", m, s) end
+    return string.format("%ds", s)
+end
+
+function UIBuilder.showDailyLogin(status: { claimed: boolean, secondsLeft: number, reward: number, coins: number }, onClaim: () -> ())
+    if not dailyFrame then return end
+    -- Clear and rebuild content
+    for _, c in ipairs(dailyFrame:GetChildren()) do
+        if c:IsA("TextLabel") or c:IsA("TextButton") then c:Destroy() end
+    end
+
+    makeText(dailyFrame, {
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 28),
+        Text = "🎁 DAILY LOGIN",
+        Font = Enum.Font.GothamBlack,
+        TextColor3 = THEME.WARN,
+        TextSize = 22,
+        ZIndex = 221,
+    })
+
+    local body
+    if status.claimed then
+        body = string.format("Sudah diklaim hari ini.\nKembali dalam %s untuk hadiah berikutnya.", fmtTime(status.secondsLeft))
+    else
+        body = string.format("Klaim %d 🟡 hari ini!", status.reward or 0)
+    end
+    makeText(dailyFrame, {
+        Position = UDim2.new(0, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, 60),
+        Text = body,
+        Font = Enum.Font.Gotham,
+        TextColor3 = THEME.TEXT,
+        TextSize = 14,
+        TextWrapped = true,
+        ZIndex = 221,
+    })
+
+    local btn = makeButton(dailyFrame, {
+        AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, 0),
+        Size = UDim2.new(0.6, 0, 0, 44),
+        BackgroundColor3 = status.claimed and THEME.SURFACE_ALT or THEME.SUCCESS,
+        Text = status.claimed and "TUTUP" or ("KLAIM " .. tostring(status.reward or 0) .. " 🟡"),
+        Font = Enum.Font.GothamBold,
+        TextColor3 = status.claimed and THEME.TEXT or Color3.fromRGB(20, 22, 28),
+        TextSize = 16,
+        AutoButtonColor = true,
+        ZIndex = 221,
+    })
+    corner(btn, 10)
+
+    btn.MouseButton1Click:Connect(function()
+        if status.claimed then
+            dailyFrame.Visible = false
+        else
+            if onClaim then onClaim() end
+            -- Close — main.client will call showDailyLogin again with updated status if needed
+            dailyFrame.Visible = false
+        end
+    end)
+
+    dailyFrame.Visible = true
+end
+
+function UIBuilder.hideDailyLogin()
+    if dailyFrame then dailyFrame.Visible = false end
 end
 
 return UIBuilder

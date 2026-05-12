@@ -45,6 +45,7 @@ local function defaultProfile()
         level = 1,
         owned = owned,
         equipped = {},   -- skin items removed; map kept for forward-compat
+        lastDailyLoginAt = 0,  -- unix seconds of last claim; 0 = never
         dirty = false,
     }
 end
@@ -70,6 +71,7 @@ local function safeLoad(userId: number)
                 if type(v) == "string" then profile.equipped[k] = v end
             end
         end
+        profile.lastDailyLoginAt = tonumber(data.lastDailyLoginAt) or 0
         return profile
     end
     return defaultProfile()
@@ -92,6 +94,7 @@ local function safeSave(userId: number, profile)
                     level = profile.level,
                     owned = profile.owned,
                     equipped = profile.equipped,
+                    lastDailyLoginAt = profile.lastDailyLoginAt or 0,
                     savedAt = os.time(),
                 }
             end)
@@ -277,6 +280,53 @@ function DataManager.owns(player: Player, itemId: string): boolean
     local p = cache[player.UserId]
     if not p then return false end
     return p.owned[itemId] == true
+end
+
+-- Returns {claimed, secondsLeft, reward, coins}
+function DataManager.getDailyLoginStatus(player: Player)
+    local p = cache[player.UserId]
+    if not p then
+        return { claimed = false, secondsLeft = 0, reward = Config.DAILY_LOGIN_REWARD, coins = 0 }
+    end
+    local now = os.time()
+    local elapsed = now - (p.lastDailyLoginAt or 0)
+    local cd = Config.DAILY_LOGIN_COOLDOWN
+    local left = math.max(0, cd - elapsed)
+    return {
+        claimed = elapsed < cd,
+        secondsLeft = left,
+        reward = Config.DAILY_LOGIN_REWARD,
+        coins = p.coins,
+    }
+end
+
+-- Atomic claim. Returns same shape as getDailyLoginStatus, but claimed reflects new state.
+function DataManager.claimDailyLogin(player: Player)
+    local p = cache[player.UserId]
+    if not p then
+        return { claimed = false, secondsLeft = 0, reward = Config.DAILY_LOGIN_REWARD, coins = 0 }
+    end
+    local now = os.time()
+    local elapsed = now - (p.lastDailyLoginAt or 0)
+    if elapsed < Config.DAILY_LOGIN_COOLDOWN then
+        return {
+            claimed = true,  -- already claimed in current window
+            secondsLeft = Config.DAILY_LOGIN_COOLDOWN - elapsed,
+            reward = Config.DAILY_LOGIN_REWARD,
+            coins = p.coins,
+        }
+    end
+    p.coins = p.coins + Config.DAILY_LOGIN_REWARD
+    p.lastDailyLoginAt = now
+    p.dirty = true
+    syncLeaderstats(player)
+    task.spawn(function() safeSave(player.UserId, p) end)
+    return {
+        claimed = true,
+        secondsLeft = Config.DAILY_LOGIN_COOLDOWN,
+        reward = Config.DAILY_LOGIN_REWARD,
+        coins = p.coins,
+    }
 end
 
 function DataManager.saveNow(player: Player)

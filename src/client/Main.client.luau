@@ -142,6 +142,22 @@ local function fireHacker()
     SoundController.play("Click", 0.4)
 end
 
+local function openDetektifMenu()
+    if localRole ~= Config.ROLE_DETEKTIF then return end
+    -- Build candidate list = all alive players except self.
+    -- We don't have authoritative alive list on client, so use Players list
+    -- (server validates anyway). Filter self.
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then table.insert(list, p) end
+    end
+    SoundController.play("Click", 0.4)
+    UIBuilder.openDetektif(list, function(target)
+        Remotes.event("DetektifKill"):FireServer(target)
+        UIBuilder.notify("Eksekusi: " .. target.DisplayName, "warn", 3)
+    end)
+end
+
 -- Map number keys 1-9 to Enum.KeyCode for vote shortcuts
 local NUM_KEYCODES: { [Enum.KeyCode]: number } = {
     [Enum.KeyCode.One]   = 1,
@@ -165,6 +181,8 @@ UserInputService.InputBegan:Connect(function(input, gp)
         fireFlash()
     elseif input.KeyCode == Config.HACKER_KEY then
         fireHacker()
+    elseif Config.DETEKTIF_KEY and input.KeyCode == Config.DETEKTIF_KEY then
+        openDetektifMenu()
     end
     -- Vote shortcut: 1-9 picks the i-th candidate while voting overlay is open
     local idx = NUM_KEYCODES[input.KeyCode]
@@ -177,6 +195,7 @@ ui.captureBtn.MouseButton1Click:Connect(fireCapture)
 ui.disguiseBtn.MouseButton1Click:Connect(fireDisguise)
 if ui.flashBtn  then ui.flashBtn.MouseButton1Click:Connect(fireFlash) end
 if ui.hackerBtn then ui.hackerBtn.MouseButton1Click:Connect(fireHacker) end
+if ui.detektifBtn then ui.detektifBtn.MouseButton1Click:Connect(openDetektifMenu) end
 ui.voteBtn.MouseButton1Click:Connect(function()
     -- Just visually scroll into view; the vote overlay is full-screen
     SoundController.play("Click", 0.4)
@@ -253,6 +272,8 @@ Remotes.event("StateChanged").OnClientEvent:Connect(function(state, payload)
         localRole = nil
         UIBuilder.setActionButtons(nil, false)
         UIBuilder.setLobbyVisible(true)
+        UIBuilder.clearMissions()
+        UIBuilder.closeDetektif()
         CameraController.restore()
     elseif state == Config.STATES.COUNTDOWN then
         UIBuilder.setLobbyVisible(true)
@@ -296,6 +317,11 @@ Remotes.event("VoteStart").OnClientEvent:Connect(function(candidates)
     UIBuilder.openVote(candidates, function(target)
         Remotes.event("VoteCast"):FireServer(target)
         UIBuilder.notify("Vote terkirim: " .. target.DisplayName, "info", 2.5)
+    end)
+    UIBuilder.bindSkipVote(function()
+        Remotes.event("VoteCast"):FireServer("skip")
+        UIBuilder.notify("Vote: SKIP", "info", 2)
+        UIBuilder.closeVote()
     end)
 end)
 
@@ -417,6 +443,76 @@ Remotes.event("DisguiseUpdated").OnClientEvent:Connect(function(peniruPlayer, ta
             UIBuilder.notify("Penyamaran sebagai " .. targetPlayer.DisplayName, "success", 3)
         end
     end
+end)
+
+----------------------------------------------------------------
+-- mission system events
+----------------------------------------------------------------
+
+Remotes.event("MissionAssigned").OnClientEvent:Connect(function(missions)
+    UIBuilder.setMissionList(missions or {})
+end)
+
+Remotes.event("MissionDone").OnClientEvent:Connect(function(stationId)
+    UIBuilder.markMissionDone(stationId)
+    SoundController.play("WinChime", 0.4)
+    UIBuilder.notify("Misi selesai!", "success", 2)
+end)
+
+Remotes.event("MissionProgress").OnClientEvent:Connect(function(pct, done, total)
+    UIBuilder.setMissionProgress(pct or 0, done or 0, total or 0)
+end)
+
+----------------------------------------------------------------
+-- detektif results
+----------------------------------------------------------------
+
+Remotes.event("DetektifResult").OnClientEvent:Connect(function(detektif, target, success)
+    local detName = detektif and detektif.DisplayName or "Detektif"
+    local tgtName = target and target.DisplayName or "?"
+    if success then
+        UIBuilder.notify(("🔍 %s membunuh %s — Peniru!"):format(detName, tgtName), "success", 5)
+        SoundController.play("WinChime", 0.6)
+    else
+        UIBuilder.notify(("🔍 %s salah orang (%s) — Detektif dipenjara"):format(detName, tgtName), "danger", 5)
+        SoundController.play("LoseChime", 0.5)
+    end
+end)
+
+Remotes.event("MeetingCalled").OnClientEvent:Connect(function(_kind)
+    UIBuilder.notify("📢 Rapat darurat! Voting dimulai.", "warn", 3)
+    SoundController.play("Suspense", 0.6)
+end)
+
+----------------------------------------------------------------
+-- daily login
+----------------------------------------------------------------
+
+local function showDailyLoginModal()
+    task.spawn(function()
+        local ok, status = pcall(function()
+            return Remotes.func("GetDailyLoginStatus"):InvokeServer()
+        end)
+        if not ok or not status then return end
+        UIBuilder.showDailyLogin(status, function()
+            -- Click claim → call claim endpoint, refresh
+            task.spawn(function()
+                local ok2, claimed = pcall(function()
+                    return Remotes.func("ClaimDailyLogin"):InvokeServer()
+                end)
+                if ok2 and claimed and claimed.claimed and claimed.secondsLeft >= Config.DAILY_LOGIN_COOLDOWN - 5 then
+                    UIBuilder.notify(("🎁 +%d 🟡 daily login!"):format(claimed.reward or 0), "success", 3)
+                end
+                refreshMyData()
+            end)
+        end)
+    end)
+end
+
+-- show modal once shortly after join (after loading screen)
+task.spawn(function()
+    task.wait(3.5)
+    showDailyLoginModal()
 end)
 
 ----------------------------------------------------------------

@@ -385,6 +385,89 @@ local function buildCity(workspace: Workspace, spawnsOut: { CFrame })
     return f
 end
 
+-- Builds N mission stations scattered around the city. Each station is a glowing
+-- pad with a ProximityPrompt; the GameManager wires up the prompt-to-server logic.
+-- Returns an array of {id, name, position, part} for assignment.
+local function buildMissionStations(parent: Instance, count: number)
+    local f = group(parent, "MissionStations")
+    local stations = {}
+
+    local missionLabels = {
+        "Perbaiki Kabel", "Periksa Mesin", "Servis Lampu", "Reset Komputer",
+        "Bersihkan Lantai", "Tukar Filter", "Periksa Pipa", "Isi Tangki",
+        "Sortir Kotak", "Servis AC", "Periksa Generator", "Bersihkan Jendela",
+        "Periksa Kunci", "Restart Server", "Periksa Alarm", "Bersihkan Meja",
+    }
+
+    -- Distribute around city via concentric rings.
+    local placed = 0
+    local rings = { { r = 60, n = 6 }, { r = 110, n = 6 }, { r = 160, n = 4 } }
+    for _, ring in ipairs(rings) do
+        for k = 1, ring.n do
+            if placed >= count then break end
+            placed += 1
+            local angle = math.rad(((k - 1) / ring.n) * 360 + (placed * 13))
+            local pos = Config.CITY_CENTER + Vector3.new(
+                math.cos(angle) * ring.r,
+                Config.SPAWN_HEIGHT - 1,
+                math.sin(angle) * ring.r
+            )
+
+            local pad = makePart({
+                Name = string.format("MissionStation_%02d", placed),
+                Size = Vector3.new(6, 0.6, 6),
+                Position = pos,
+                Color = Color3.fromRGB(80, 200, 255),
+                Material = Enum.Material.Neon,
+                Transparency = 0.25,
+            })
+            pad.Parent = f
+
+            local glow = Instance.new("PointLight")
+            glow.Brightness = 1.6
+            glow.Range = 12
+            glow.Color = Color3.fromRGB(80, 200, 255)
+            glow.Parent = pad
+
+            local marker = makePart({
+                Name = "Marker",
+                Size = Vector3.new(0.6, 6, 0.6),
+                Position = pos + Vector3.new(0, 3.5, 0),
+                Color = Color3.fromRGB(255, 230, 130),
+                Material = Enum.Material.Neon,
+                Transparency = 0.2,
+            })
+            marker.Parent = f
+
+            local prompt = Instance.new("ProximityPrompt")
+            prompt.Name = "MissionPrompt"
+            prompt.ActionText = "Misi"
+            prompt.ObjectText = missionLabels[((placed - 1) % #missionLabels) + 1]
+            prompt.HoldDuration = Config.MISSION_DURATION
+            prompt.MaxActivationDistance = 8
+            prompt.RequiresLineOfSight = false
+            -- Always Enabled. Server-side validates that the triggering player
+            -- has this mission assigned (and is alive / in ROUND state).
+            prompt.Enabled = true
+            prompt.Parent = pad
+
+            local id = string.format("station_%02d", placed)
+            pad:SetAttribute("MissionId", id)
+            marker:SetAttribute("MissionId", id)
+
+            table.insert(stations, {
+                id   = id,
+                name = prompt.ObjectText,
+                pos  = pos,
+                part = pad,
+                prompt = prompt,
+            })
+        end
+    end
+
+    return stations
+end
+
 local function buildPrison(workspace: Workspace, prisonSpawnsOut: { CFrame })
     local f = group(workspace, "Prison")
 
@@ -494,12 +577,14 @@ function MapBuilder.build()
     local citySpawns = {}
     local prisonSpawns = {}
     buildLobby(workspace)
-    buildCity(workspace, citySpawns)
+    local cityFolder = buildCity(workspace, citySpawns)
+    local missionStations = buildMissionStations(cityFolder, Config.MISSION_STATIONS)
     buildPrison(workspace, prisonSpawns)
 
     return {
         citySpawns = citySpawns,
         prisonSpawns = prisonSpawns,
+        missionStations = missionStations,
         lobbyCFrame = CFrame.new(Config.LOBBY_CENTER + Vector3.new(0, Config.SPAWN_HEIGHT, 0)),
     }
 end
